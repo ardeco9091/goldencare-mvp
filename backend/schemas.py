@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EstadoServicio(str, Enum):
@@ -40,6 +40,11 @@ class ServicioRead(ServicioCreate):
     """Representación de un servicio persistido."""
 
     id_servicio: UUID
+    nombre_contacto: Optional[str] = None
+    preferencias: Optional[str] = None
+    id_prestador_asignado: Optional[UUID] = None
+    prestador_asignado: Optional[str] = None
+    comentario_encuesta: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -79,11 +84,19 @@ class PersonaUsuariaRead(PersonaUsuariaBase):
 
 
 class PrestadorCreate(BaseModel):
-    """Datos para registrar un prestador."""
+    """Datos para registrar un prestador (rol almacena 'Nombre - Especialidad')."""
 
     rol: str = Field(min_length=1, max_length=50)
     disponibilidad: bool = True
     estado: str = Field(default="activo", min_length=1, max_length=30)
+
+    @field_validator("rol")
+    @classmethod
+    def validar_rol(cls, valor: str) -> str:
+        limpio = valor.strip()
+        if not limpio:
+            raise ValueError("El nombre y especialidad del prestador no puede estar vacío.")
+        return limpio
 
 
 class PrestadorRead(PrestadorCreate):
@@ -91,6 +104,76 @@ class PrestadorRead(PrestadorCreate):
 
     id_prestador: UUID
     model_config = ConfigDict(from_attributes=True)
+
+
+class AsignarPrestadorRequest(BaseModel):
+    """Datos para asignar un prestador a un servicio."""
+
+    id_prestador: UUID
+
+
+class EncuestaCreate(BaseModel):
+    """Datos enviados por el cliente para calificar un servicio completado."""
+
+    valoracion: int = Field(ge=1, le=5)
+    comentario: Optional[str] = None
+
+
+class EncuestaRead(EncuestaCreate):
+    """Representación de una encuesta persistida."""
+
+    id_encuesta: UUID
+    id_servicio: UUID
+    model_config = ConfigDict(from_attributes=True)
+
+
+ZonaPermitida = Literal["Zona Centro", "Barrio Norte", "Zona Sur"]
+TipoServicioPermitido = Literal["traslado", "acompañamiento", "mandado"]
+
+
+class PedidoPublicoCreate(BaseModel):
+    """Datos unificados enviados desde el portal público de solicitud de servicios."""
+
+    nombre_contacto: str = Field(min_length=1, max_length=80)
+    zona: ZonaPermitida
+    tipo_servicio: TipoServicioPermitido
+    fecha_hora: datetime
+    preferencias: Optional[str] = None
+
+    @field_validator("nombre_contacto")
+    @classmethod
+    def validar_nombre_contacto(cls, valor: str) -> str:
+        limpio = valor.strip()
+        if not limpio:
+            raise ValueError("El nombre o contacto no puede estar vacío.")
+        return limpio
+
+
+class PedidoPublicoRead(ServicioRead):
+    """Respuesta al crear un pedido público con su código corto de seguimiento."""
+
+    codigo_seguimiento: str
+    nombre_contacto: str
+    servicio: ServicioRead
+
+
+class PedidoConsultaRead(ServicioRead):
+    """Resultado de consulta pública de pedidos por código o contacto."""
+
+    codigo_seguimiento: str
+    nombre_contacto: str
+    servicio: ServicioRead
+
+
+class MetricasRead(BaseModel):
+    """Métricas operativas en tiempo real para el Panel del Coordinador."""
+
+    total_usuarios: int
+    servicios_pendientes: int
+    servicios_completados: int
+    tasa_cumplimiento: float
+    promedio_valoracion: Optional[float] = None
+    total_encuestas: int = 0
 
 
 # Alias con el mismo nombre de las entidades SQLAlchemy del modelo conceptual.
@@ -111,4 +194,11 @@ __all__ = [
     "Persona_UsuariaRead",
     "PrestadorCreate",
     "PrestadorRead",
+    "AsignarPrestadorRequest",
+    "EncuestaCreate",
+    "EncuestaRead",
+    "PedidoPublicoCreate",
+    "PedidoPublicoRead",
+    "PedidoConsultaRead",
+    "MetricasRead",
 ]

@@ -1,102 +1,114 @@
 # GoldenCare MVP
 
-GoldenCare es un MVP académico para la gestión y coordinación de servicios de asistencia no médica. Permite registrar personas usuarias, crear solicitudes, consultar servicios pendientes y actualizar sus estados operativos.
+**GoldenCare** es una plataforma de coordinación de servicios de asistencia no médica (traslados, acompañamientos y mandados) diseñada para conectar de forma simple, accesible y en tiempo real a personas usuarias, sus familiares y el equipo de coordinación operativa.
 
-## Arquitectura
+---
 
-El proyecto está organizado en dos aplicaciones:
+## Arquitectura General
+
+El proyecto sigue una arquitectura desacoplada en dos aplicaciones dentro del monorepo:
 
 ```text
 goldencare-mvp/
-├── backend/
-│   ├── main.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── seed.py
-│   ├── requirements.txt
-│   └── goldencare.db
-└── frontend/
+├── AGENTS.md                 # Reglas y convenciones del proyecto
+├── README.md                 # Documentación general y guía de ejecución
+├── backend/                  # API REST con FastAPI + SQLAlchemy + SQLite
+│   ├── main.py               # Endpoints y lógica de negocio
+│   ├── models.py             # Modelos relacionales SQLAlchemy
+│   ├── schemas.py            # Validación de esquemas con Pydantic v2
+│   ├── seed.py               # Carga determinista e idempotente de datos iniciales
+│   ├── requirements.txt      # Dependencias de Python
+│   └── goldencare.db         # Base de datos SQLite local
+└── frontend/                 # Aplicación web Next.js 16 (App Router)
     ├── app/
+    │   ├── layout.tsx        # Layout raíz en español (es-AR)
+    │   ├── page.tsx          # Portal Público del Cliente (/)
+    │   └── admin/
+    │       └── page.tsx      # Panel Operativo del Coordinador (/admin)
     ├── package.json
-    └── package-lock.json
+    └── tsconfig.json
 ```
 
-### Backend
+### Stack Tecnológico
+- **Backend:** Python 3.10+ · FastAPI · SQLAlchemy 2.0 · Pydantic v2 · SQLite (`backend/goldencare.db`) en `http://127.0.0.1:8000`.
+- **Frontend:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 (paleta de alto contraste `slate` + `cyan`) en `http://localhost:3000`.
 
-- Python
-- FastAPI
-- SQLAlchemy
-- Pydantic
-- SQLite para desarrollo
+---
 
-Endpoints principales:
+## Módulos y Rutas del Frontend
+
+### 1. Portal Público del Cliente (`/`)
+Interfaz accesible, clara y 100% *mobile-first* orientada a personas usuarias y familiares:
+- **Solicitar un Servicio:** Flujo guiado en 3 pasos para elegir el tipo de asistencia (`traslado`, `acompañamiento` o `mandado`), zona (`Zona Centro`, `Barrio Norte`, `Zona Sur`), fecha/hora y datos de contacto con notas o preferencias.
+- **Comprobante con Código Corto:** Genera un código único de 8 caracteres con botón de copiado rápido y estado en vivo.
+- **Seguir mi Pedido:** Buscador por código de 8 caracteres o por nombre/teléfono, con barra visual de progreso, explicación de cada etapa, visualización del **profesional asignado** y auto-refresco silencioso cada 4 segundos.
+- **Encuesta de Satisfacción:** Cuando el servicio pasa a estado `completado`, habilita automáticamente la calificación de 1 a 5 estrellas (`★`) y comentario opcional, tanto en el comprobante en vivo como en la pestaña de seguimiento.
+
+### 2. Panel del Coordinador (`/admin`)
+Dashboard operativo para la gestión integral de la demanda en tiempo real:
+- **Métricas Operativas en Vivo:** Tarjetas sincronizadas con la base de datos para **Total Usuarios**, **Servicios Pendientes**, **Tasa de Cumplimiento** y **Satisfacción Promedio (`★`)**.
+- **Gestión de Clientes y Prestadores:** Modales ágiles para dar de alta nuevos clientes (`Persona_Usuaria` + `Contacto_Familiar`) y profesionales (`Prestador`).
+- **Asignación de Prestadores y Estados:** Tabla interactiva con datos de contacto y preferencias del cliente, selector directo de **Prestador Asignado** (que vincula la tabla `Asignacion` y pasa el servicio a `asignado`) y selector de estado operativo (`solicitado`, `asignado`, `en curso`, `completado`, `cancelado`).
+- **Sincronización Automática:** Refresco silencioso cada 4 segundos con pausa inteligente al abrir modales y tolerancia a reinicios del servidor.
+
+---
+
+## Endpoints Principales de la API (`http://127.0.0.1:8000`)
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `POST` | `/usuarios/` | Registra una persona usuaria y su contacto |
-| `GET` | `/usuarios/` | Lista personas usuarias disponibles |
-| `POST` | `/servicios/` | Registra una solicitud de servicio |
-| `GET` | `/servicios/pendientes` | Consulta servicios abiertos |
-| `PATCH` | `/servicios/{id_servicio}/estado` | Actualiza el estado de un servicio |
+| `POST` | `/pedidos/publico` | Registra un pedido desde el portal público (reutilizando o creando la `Persona_Usuaria` y `Contacto_Familiar`) y devuelve el código de seguimiento de 8 caracteres |
+| `GET` | `/pedidos/consultar/{codigo_o_contacto}` | Busca pedidos por código corto de 8 caracteres o coincidencia parcial en el nombre/teléfono de contacto |
+| `POST` | `/servicios/{id_servicio}/encuesta` | Registra la valoración (1 a 5 estrellas) y comentario en la tabla `Encuesta` para un servicio `completado` |
+| `GET` | `/servicios/pendientes` | Lista los servicios abiertos (`solicitado`, `asignado`, `en curso`) enriquecidos con contacto, preferencias y prestador asignado |
+| `POST` | `/servicios/` | Registra un nuevo servicio desde el panel del coordinador |
+| `POST` | `/servicios/{id_servicio}/asignar` | Crea o actualiza la `Asignacion` de un prestador y cambia automáticamente el estado a `asignado` |
+| `PATCH` | `/servicios/{id_servicio}/estado` | Actualiza el estado operativo de un servicio |
+| `GET` | `/metricas` | Devuelve métricas consolidadas en tiempo real (`total_usuarios`, `servicios_pendientes`, `servicios_completados`, `tasa_cumplimiento`, `promedio_valoracion`, `total_encuestas`) |
+| `GET` | `/usuarios/` | Lista las personas usuarias registradas con su contacto familiar |
+| `POST` | `/usuarios/` | Registra una nueva persona usuaria y su contacto responsable |
+| `GET` | `/prestadores/` | Lista los prestadores activos disponibles para asignación |
+| `POST` | `/prestadores/` | Registra un nuevo prestador operativo (`Nombre - Especialidad`) |
 
-Estados válidos: `solicitado`, `asignado`, `en curso`, `completado` y `cancelado`.
+---
 
-### Frontend
+## Guía de Instalación y Ejecución Local
 
-- Next.js con App Router
-- React
-- TypeScript
-- Tailwind CSS
+### Requisitos previos
+- **Python** 3.10 o superior
+- **Node.js** 18.18 o superior y **npm**
 
-El frontend contiene el dashboard del coordinador, formularios para clientes y servicios, y actualización interactiva de estados.
+### 1. Levantar el Backend (FastAPI)
 
-## Requisitos
-
-- Python 3.10 o superior
-- Node.js 18.18 o superior
-- npm
-- Git
-
-## Instalación y ejecución del backend
-
-Desde la carpeta raíz del repositorio:
-
-### Windows PowerShell
+Abrir una terminal en la raíz del proyecto (`goldencare-mvp`):
 
 ```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Si PowerShell bloquea la activación del entorno, se puede ejecutar en esa terminal:
-
+*(Opcional)* Si PowerShell restringe la ejecución de scripts en la sesión actual:
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-Luego iniciar la API:
-
-```powershell
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
-
-La API estará disponible en:
-
-- http://127.0.0.1:8000
-- Documentación Swagger: http://127.0.0.1:8000/docs
-
-Para cargar o actualizar el dataset simulado:
-
+Poblar o sincronizar los datos iniciales de demostración (script idempotente con 4 clientes, 3 prestadores, 6 servicios y 2 encuestas):
 ```powershell
 python seed.py
 ```
 
-## Instalación y ejecución del frontend
+Iniciar el servidor FastAPI en el puerto `8000`:
+```powershell
+uvicorn main:app --reload --port 8000
+```
+- **API Base:** http://127.0.0.1:8000
+- **Documentación interactiva (Swagger UI):** http://127.0.0.1:8000/docs
 
-Abrir una segunda terminal:
+### 2. Levantar el Frontend (Next.js)
+
+Abrir una **segunda terminal** en la raíz del proyecto (`goldencare-mvp`):
 
 ```powershell
 cd frontend
@@ -104,37 +116,23 @@ npm install
 npm run dev
 ```
 
-El dashboard estará disponible en http://localhost:3000.
+Accesos en el navegador:
+- **Portal Público del Cliente:** http://localhost:3000
+- **Panel Operativo del Coordinador:** http://localhost:3000/admin
 
-El backend debe estar funcionando en el puerto 8000 para que el dashboard pueda consultar y registrar datos.
+---
 
-## Validaciones de desarrollo
+## Verificación de Calidad y Compilación
 
-Backend:
-
+### Backend (Python)
 ```powershell
 cd backend
-python -m py_compile models.py schemas.py main.py
+python -m py_compile models.py schemas.py main.py seed.py
 ```
 
-Frontend:
-
+### Frontend (TypeScript y Build de Producción)
 ```powershell
 cd frontend
-npm run lint
 npx tsc --noEmit
+npm run build
 ```
-
-## Datos de desarrollo
-
-El archivo `backend/goldencare.db` se conserva intencionalmente en el repositorio porque contiene datos de prueba del MVP. El script `backend/seed.py` también se incluye para reproducir el dataset simulado en otra máquina.
-
-Para producción se recomienda migrar a PostgreSQL, utilizar Alembic para migraciones, incorporar autenticación por roles y separar los datos de desarrollo de los datos productivos.
-
-## Próximas etapas
-
-1. Agregar autenticación y roles para coordinadores, familiares y prestadores.
-2. Crear el portal web para que familiares registren personas usuarias y soliciten servicios.
-3. Implementar asignación de prestadores y notificaciones.
-4. Migrar la base de datos a PostgreSQL.
-5. Agregar pruebas automatizadas, auditoría y despliegue con Docker.
