@@ -1,4 +1,4 @@
-"""Carga determinista e idempotente del dataset inicial de GoldenCare.
+"""Carga determinista e idempotente del dataset inicial de GoldenCare (San Pedro de Jujuy).
 
 Ejecutar desde la raíz o desde la carpeta backend:
 
@@ -97,7 +97,7 @@ def upsert(
 
 
 def seed() -> None:
-    """Crea las tablas necesarias y carga el dataset reproducible de GoldenCare."""
+    """Crea las tablas necesarias y carga el dataset reproducible de San Pedro de Jujuy."""
 
     Base.metadata.create_all(bind=engine)
     now = datetime.now().astimezone().replace(second=0, microsecond=0)
@@ -105,31 +105,31 @@ def seed() -> None:
     users = {
         "ana": {
             "id_usuario": USUARIO_IDS["ana"],
-            "zona": "Zona Centro",
-            "preferencias": "Acompañamiento por la mañana · Av. Belgrano 450, usa bastón",
+            "zona": "Centro / Microcentro",
+            "preferencias": "Dirección: Calle Mitre 420 (frente a Plaza Belgrano) · Acompañamiento por la mañana, camina con bastón",
             "estado": "activa",
-            "canal": "Ana López - 388 412 3456",
+            "canal": "Ana López - 3888 412345",
         },
         "carlos": {
             "id_usuario": USUARIO_IDS["carlos"],
-            "zona": "Barrio Norte",
-            "preferencias": "Traslados a control cardiológico · Los Perales 210",
+            "zona": "Barrio Belgrano",
+            "preferencias": "Dirección: Av. Siria 250 (cerca del Hospital Paterson) · Traslados a control cardiológico",
             "estado": "activa",
-            "canal": "Carlos Ruiz - 388 456 7890",
+            "canal": "Carlos Ruiz - 3888 456789",
         },
         "marta": {
             "id_usuario": USUARIO_IDS["marta"],
-            "zona": "Zona Sur",
-            "preferencias": "Preferencia por prestadora mujer · Pje. Las Rosas 88",
+            "zona": "Barrio Patricios",
+            "preferencias": "Dirección: Av. 9 de Julio 610 · Preferencia por prestadora mujer, casa rejas blancas",
             "estado": "activa",
-            "canal": "Marta Sosa - 388 511 2233",
+            "canal": "Marta Sosa - 3888 511223",
         },
         "jorge": {
             "id_usuario": USUARIO_IDS["jorge"],
-            "zona": "Zona Centro",
-            "preferencias": "Mandados de farmacia y supermercado · San Martín 920",
+            "zona": "Barrio Providencia",
+            "preferencias": "Dirección: Av. Sarmiento 180 (a 2 cuadras de la Terminal) · Mandados de farmacia y supermercado",
             "estado": "activa",
-            "canal": "Jorge Paz - 388 499 8877",
+            "canal": "Jorge Paz - 3888 499887",
         },
     }
 
@@ -152,16 +152,15 @@ def seed() -> None:
     }
 
     # 6 servicios en distintos estados (solicitado, asignado, en curso, completado)
-    # con 2 encuestas respondidas y 1 completado listo para calificar en vivo.
+    # con barrios reales de San Pedro de Jujuy.
     service_specs = [
         {
             "id_servicio": SERVICIO_IDS[0],
             "user_key": "ana",
             "tipo_servicio": "acompañamiento",
-            "zona": "Zona Centro",
+            "zona": "Centro / Microcentro",
             "estado": "solicitado",
-            "days_offset": 1,
-            "hour": 9,
+            "hours_offset": 4,  # Dentro de las próximas 24h -> Urgente
             "provider_key": None,
             "survey": None,
         },
@@ -169,10 +168,9 @@ def seed() -> None:
             "id_servicio": SERVICIO_IDS[1],
             "user_key": "jorge",
             "tipo_servicio": "mandado",
-            "zona": "Zona Centro",
+            "zona": "Barrio Providencia",
             "estado": "asignado",
-            "days_offset": 1,
-            "hour": 11,
+            "hours_offset": 18,  # Dentro de las próximas 24h -> Urgente
             "provider_key": "carolina",
             "survey": None,
         },
@@ -180,10 +178,9 @@ def seed() -> None:
             "id_servicio": SERVICIO_IDS[2],
             "user_key": "carlos",
             "tipo_servicio": "traslado",
-            "zona": "Barrio Norte",
+            "zona": "Barrio Belgrano",
             "estado": "en curso",
-            "days_offset": 0,
-            "hour": 10,
+            "hours_offset": -1,
             "provider_key": "roberto",
             "survey": None,
         },
@@ -191,46 +188,57 @@ def seed() -> None:
             "id_servicio": SERVICIO_IDS[3],
             "user_key": "marta",
             "tipo_servicio": "acompañamiento",
-            "zona": "Zona Sur",
+            "zona": "Barrio Patricios",
             "estado": "completado",
-            "days_offset": -2,
-            "hour": 16,
+            "hours_offset": -48,
             "provider_key": "laura",
             "survey": {
                 "id_encuesta": UUID("e1111111-1111-4111-8111-111111111111"),
                 "valoracion": 5,
-                "comentario": "Excelente trato y puntualidad de Laura con mi mamá.",
+                "comentario": "Excelente trato y puntualidad de Laura con mi mamá en Barrio Patricios.",
             },
         },
         {
             "id_servicio": SERVICIO_IDS[4],
             "user_key": "carlos",
             "tipo_servicio": "mandado",
-            "zona": "Barrio Norte",
+            "zona": "Barrio Belgrano",
             "estado": "completado",
-            "days_offset": -3,
-            "hour": 14,
+            "hours_offset": -72,
             "provider_key": "carolina",
             "survey": {
                 "id_encuesta": UUID("e2222222-2222-4222-8222-222222222222"),
                 "valoracion": 4,
-                "comentario": "Muy rápida la gestión de los medicamentos en la farmacia.",
+                "comentario": "Muy rápida la compra de medicamentos cerca del Hospital Paterson.",
             },
         },
         {
             "id_servicio": SERVICIO_IDS[5],
             "user_key": "ana",
             "tipo_servicio": "traslado",
-            "zona": "Zona Centro",
+            "zona": "Centro / Microcentro",
             "estado": "completado",
-            "days_offset": -1,
-            "hour": 12,
+            "hours_offset": -24,
             "provider_key": "roberto",
             "survey": None,  # Completado sin calificar aún para probar encuesta en vivo
         },
     ]
 
     with Session(engine) as session:
+        # También actualizamos zonas genéricas previas en la base si existen
+        mapa_zonas_legacy = {
+            "Zona Centro": "Centro / Microcentro",
+            "Barrio Norte": "Barrio Belgrano",
+            "Zona Sur": "Barrio Patricios",
+        }
+        for usuario_db in session.scalars(select(Persona_Usuaria)).all():
+            if usuario_db.zona in mapa_zonas_legacy:
+                usuario_db.zona = mapa_zonas_legacy[usuario_db.zona]
+
+        for servicio_db in session.scalars(select(Servicio)).all():
+            if servicio_db.zona in mapa_zonas_legacy:
+                servicio_db.zona = mapa_zonas_legacy[servicio_db.zona]
+
         for key, data in users.items():
             user_id = data["id_usuario"]
             upsert(
@@ -276,9 +284,7 @@ def seed() -> None:
 
         for index, spec in enumerate(service_specs):
             service_id = spec["id_servicio"]
-            service_date = (now + timedelta(days=spec["days_offset"])).replace(
-                hour=spec["hour"]
-            )
+            service_date = now + timedelta(hours=spec["hours_offset"])
             is_completed = spec["estado"] == "completado"
             survey_data = spec["survey"]
 
@@ -343,8 +349,8 @@ def seed() -> None:
         session.commit()
 
     print(
-        "Dataset inicial de GoldenCare sincronizado con éxito: "
-        "4 personas usuarias con contactos, 3 prestadores activos, 6 servicios y 2 encuestas."
+        "Dataset de San Pedro de Jujuy sincronizado con éxito: "
+        "4 personas usuarias, 3 prestadores activos, 6 servicios y 2 encuestas."
     )
 
 

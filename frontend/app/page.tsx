@@ -2,13 +2,18 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  BARRIOS_SAN_PEDRO,
+  combinarDireccionYPreferencias,
+  type BarrioSanPedro,
+} from "./constants/barrios";
 
 const CREATE_PUBLIC_ORDER_URL = "http://127.0.0.1:8000/pedidos/publico";
 const CONSULT_PUBLIC_ORDER_URL = "http://127.0.0.1:8000/pedidos/consultar";
 const SERVICE_SURVEY_BASE_URL = "http://127.0.0.1:8000/servicios";
 
 type TipoServicio = "traslado" | "acompañamiento" | "mandado";
-type Zona = "Zona Centro" | "Barrio Norte" | "Zona Sur";
+type Zona = BarrioSanPedro | string;
 type EstadoServicio =
   | "solicitado"
   | "asignado"
@@ -24,6 +29,7 @@ type PedidoRespuesta = {
   zona: Zona;
   fecha_hora: string;
   estado: EstadoServicio;
+  preferencias?: string | null;
   prestador_asignado?: string | null;
   valoracion?: number | null;
   comentario_encuesta?: string | null;
@@ -63,7 +69,7 @@ const SERVICIOS_DISPONIBLES: ServicioOption[] = [
   },
 ];
 
-const ZONAS_DISPONIBLES: Zona[] = ["Zona Centro", "Barrio Norte", "Zona Sur"];
+const ZONAS_DISPONIBLES = BARRIOS_SAN_PEDRO;
 
 const ESTADOS_INFO: Record<
   EstadoServicio,
@@ -142,7 +148,8 @@ export default function ClientPortalPage() {
 
   // Estado del formulario "Solicitar un Servicio"
   const [tipoServicio, setTipoServicio] = useState<TipoServicio>("traslado");
-  const [zona, setZona] = useState<Zona>("Zona Centro");
+  const [zona, setZona] = useState<Zona>(BARRIOS_SAN_PEDRO[0]);
+  const [direccionReferencia, setDireccionReferencia] = useState<string>("");
   const [fechaHora, setFechaHora] = useState<string>("");
   const [nombreContacto, setNombreContacto] = useState<string>("");
   const [preferencias, setPreferencias] = useState<string>("");
@@ -354,6 +361,11 @@ export default function ClientPortalPage() {
 
     setIsSubmitting(true);
     try {
+      const preferenciasCombinadas = combinarDireccionYPreferencias(
+        direccionReferencia,
+        preferencias,
+      );
+
       const response = await fetch(CREATE_PUBLIC_ORDER_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -362,7 +374,7 @@ export default function ClientPortalPage() {
           zona,
           tipo_servicio: tipoServicio,
           fecha_hora: new Date(fechaHora).toISOString(),
-          preferencias: preferencias.trim() || null,
+          preferencias: preferenciasCombinadas,
         }),
       });
 
@@ -400,7 +412,8 @@ export default function ClientPortalPage() {
     setConfirmedOrder(null);
     setSubmitError(null);
     setTipoServicio("traslado");
-    setZona("Zona Centro");
+    setZona(BARRIOS_SAN_PEDRO[0]);
+    setDireccionReferencia("");
     setFechaHora("");
     setPreferencias("");
     setCopiedCode(false);
@@ -748,7 +761,7 @@ export default function ClientPortalPage() {
                     </dd>
                   </div>
                   <div>
-                    <dt className="font-medium text-slate-500">Zona</dt>
+                    <dt className="font-medium text-slate-500">Barrio / Sector</dt>
                     <dd className="mt-1 text-base font-bold text-slate-900">
                       {confirmedOrder.zona}
                     </dd>
@@ -769,6 +782,16 @@ export default function ClientPortalPage() {
                       {confirmedOrder.nombre_contacto}
                     </dd>
                   </div>
+                  {confirmedOrder.preferencias && (
+                    <div className="sm:col-span-2">
+                      <dt className="font-medium text-slate-500">
+                        Dirección y detalles indicados
+                      </dt>
+                      <dd className="mt-1 text-sm font-medium text-slate-800">
+                        {confirmedOrder.preferencias}
+                      </dd>
+                    </div>
+                  )}
                 </dl>
 
                 {/* Barra de progreso en vivo también en la pantalla de confirmación */}
@@ -894,7 +917,7 @@ export default function ClientPortalPage() {
                 </div>
               </section>
 
-              {/* Paso 2: Zona y Fecha/Hora */}
+              {/* Paso 2: Barrio, Dirección y Fecha/Hora */}
               <section
                 aria-labelledby="paso-2-titulo"
                 className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
@@ -907,12 +930,12 @@ export default function ClientPortalPage() {
                     id="paso-2-titulo"
                     className="text-xl font-bold text-slate-950 sm:text-2xl"
                   >
-                    Zona y Fecha del servicio
+                    Barrio, Dirección y Fecha del servicio
                   </h2>
                 </div>
                 <p className="mt-2 text-sm text-slate-600 sm:text-base">
-                  Indicá en qué zona se realizará la asistencia y cuándo la
-                  necesitás.
+                  Seleccioná tu barrio en San Pedro de Jujuy, indicá la
+                  dirección o referencia y cuándo necesitás la asistencia.
                 </p>
 
                 <div className="mt-5 grid grid-cols-1 gap-6 sm:grid-cols-2">
@@ -921,7 +944,7 @@ export default function ClientPortalPage() {
                       htmlFor="zona-select"
                       className="mb-2 block text-base font-bold text-slate-800"
                     >
-                      Zona de residencia o atención
+                      Barrio / Sector (San Pedro de Jujuy)
                     </label>
                     <select
                       id="zona-select"
@@ -956,6 +979,26 @@ export default function ClientPortalPage() {
                       onChange={(event) => setFechaHora(event.target.value)}
                       required
                       className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3.5 text-base font-medium text-slate-900 outline-none transition focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label
+                      htmlFor="direccion-referencia-input"
+                      className="mb-2 block text-base font-bold text-slate-800"
+                    >
+                      Dirección o referencia exacta
+                    </label>
+                    <input
+                      id="direccion-referencia-input"
+                      name="direccion_referencia"
+                      type="text"
+                      value={direccionReferencia}
+                      onChange={(event) =>
+                        setDireccionReferencia(event.target.value)
+                      }
+                      placeholder="Ej. Av. Siria 250 o Cerca del Hospital Paterson"
+                      className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20"
                     />
                   </div>
                 </div>
@@ -1183,7 +1226,7 @@ export default function ClientPortalPage() {
                             </dd>
                           </div>
                           <div>
-                            <dt className="font-medium text-slate-500">Zona</dt>
+                            <dt className="font-medium text-slate-500">Barrio</dt>
                             <dd className="mt-0.5 font-semibold text-slate-900">
                               {pedido.zona}
                             </dd>
@@ -1196,6 +1239,16 @@ export default function ClientPortalPage() {
                               {formatearFechaHora(pedido.fecha_hora)}
                             </dd>
                           </div>
+                          {pedido.preferencias && (
+                            <div className="sm:col-span-3">
+                              <dt className="font-medium text-slate-500">
+                                Dirección y notas
+                              </dt>
+                              <dd className="mt-0.5 text-sm text-slate-700">
+                                {pedido.preferencias}
+                              </dd>
+                            </div>
+                          )}
                         </dl>
 
                         {/* Barra de progreso y explicación del estado */}

@@ -4,11 +4,17 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
 } from "react";
+import {
+  BARRIOS_SAN_PEDRO,
+  combinarDireccionYPreferencias,
+  type BarrioSanPedro,
+} from "../constants/barrios";
 
 const API_URL = "http://127.0.0.1:8000/servicios/pendientes";
 const CREATE_API_URL = "http://127.0.0.1:8000/servicios/";
@@ -22,6 +28,8 @@ type EstadoServicio =
   | "en curso"
   | "completado"
   | "cancelado";
+
+type SortCriterion = "urgencia" | "fecha" | "cliente" | "estado";
 
 type Servicio = {
   id_servicio: string;
@@ -63,13 +71,15 @@ type Metricas = {
 type NewServiceForm = {
   usuarioId: string;
   tipoServicio: "traslado" | "acompañamiento" | "mandado";
-  zona: "Zona Centro" | "Barrio Norte" | "Zona Sur";
+  zona: BarrioSanPedro;
+  direccion: string;
   fechaHora: string;
 };
 
 type NewClientForm = {
   contacto: string;
-  zona: "Zona Centro" | "Barrio Norte" | "Zona Sur";
+  zona: BarrioSanPedro;
+  direccion: string;
   preferencias: string;
 };
 
@@ -80,13 +90,15 @@ type NewProviderForm = {
 const initialForm: NewServiceForm = {
   usuarioId: "",
   tipoServicio: "traslado",
-  zona: "Zona Centro",
+  zona: BARRIOS_SAN_PEDRO[0],
+  direccion: "",
   fechaHora: "",
 };
 
 const initialClientForm: NewClientForm = {
   contacto: "",
-  zona: "Zona Centro",
+  zona: BARRIOS_SAN_PEDRO[0],
+  direccion: "",
   preferencias: "",
 };
 
@@ -110,6 +122,14 @@ const serviceStatuses: EstadoServicio[] = [
   "completado",
   "cancelado",
 ];
+
+const ESTADO_PRIORIDAD: Record<EstadoServicio, number> = {
+  solicitado: 1,
+  asignado: 2,
+  "en curso": 3,
+  completado: 4,
+  cancelado: 5,
+};
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("es-AR", {
@@ -142,15 +162,37 @@ function statusClass(status: EstadoServicio) {
   }
 }
 
+function isServiceUrgent(service: Servicio, nowMs: number | null): boolean {
+  if (nowMs === null) {
+    return false;
+  }
+  if (service.estado !== "solicitado" && service.estado !== "asignado") {
+    return false;
+  }
+  const serviceMs = new Date(service.fecha_hora).getTime();
+  if (Number.isNaN(serviceMs)) {
+    return false;
+  }
+  const diffHours = (serviceMs - nowMs) / (1000 * 60 * 60);
+  return diffHours <= 24;
+}
+
 export default function AdminPage() {
   const [services, setServices] = useState<Servicio[]>([]);
   const [users, setUsers] = useState<Usuario[]>([]);
   const [providers, setProviders] = useState<Prestador[]>([]);
   const [metricsData, setMetricsData] = useState<Metricas>(initialMetrics);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const consecutiveFailuresRef = useRef<number>(0);
+
+  // Filtros, búsqueda y ordenamiento de la tabla
+  const [searchFilter, setSearchFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("todos");
+  const [typeFilter, setTypeFilter] = useState<string>("todos");
+  const [sortBy, setSortBy] = useState<SortCriterion>("urgencia");
 
   // Modal Nuevo Servicio
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -215,6 +257,7 @@ export default function AdminPage() {
       consecutiveFailuresRef.current = 0;
       setError(null);
       setLastSyncTime(getCurrentTimeLabel());
+      setNowMs(Date.now());
     } catch {
       if (signal?.aborted) {
         return;
@@ -249,6 +292,7 @@ export default function AdminPage() {
 
       consecutiveFailuresRef.current = 0;
       setLastSyncTime(getCurrentTimeLabel());
+      setNowMs(Date.now());
     } catch (requestError) {
       if (signal?.aborted) {
         return;
@@ -321,6 +365,7 @@ export default function AdminPage() {
         setMetricsData(liveMetrics);
         consecutiveFailuresRef.current = 0;
         setLastSyncTime(getCurrentTimeLabel());
+        setNowMs(Date.now());
       })
       .catch((requestError: unknown) => {
         if (controller.signal.aborted) {
@@ -382,6 +427,68 @@ export default function AdminPage() {
     silentRefreshAll,
   ]);
 
+  // Filtrado y ordenamiento reactivo (conserva selección durante los auto-refrescos)
+  const filteredAndSortedServices = useMemo(() => {
+    const query = searchFilter.trim().toLowerCase();
+
+    const filtered = services.filter((service) => {
+      if (statusFilter !== "todos" && service.estado !== statusFilter) {
+        return false;
+      }
+      if (typeFilter !== "todos" && service.tipo_servicio !== typeFilter) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+
+      const idShort = service.id_servicio.slice(0, 8).toLowerCase();
+      const contact = (service.nombre_contacto ?? "").toLowerCase();
+      const zone = service.zona.toLowerCase();
+      const prefs = (service.preferencias ?? "").toLowerCase();
+      const provider = (service.prestador_asignado ?? "").toLowerCase();
+
+      return (
+        idShort.includes(query) ||
+        contact.includes(query) ||
+        zone.includes(query) ||
+        prefs.includes(query) ||
+        provider.includes(query)
+      );
+    });
+
+    return [...filtered].sort((a, b) => {
+      const timeA = new Date(a.fecha_hora).getTime();
+      const timeB = new Date(b.fecha_hora).getTime();
+
+      switch (sortBy) {
+        case "urgencia": {
+          const aIsSolicitado = a.estado === "solicitado" ? 0 : 1;
+          const bIsSolicitado = b.estado === "solicitado" ? 0 : 1;
+          if (aIsSolicitado !== bIsSolicitado) {
+            return aIsSolicitado - bIsSolicitado;
+          }
+          return timeA - timeB;
+        }
+        case "fecha":
+          return timeA - timeB;
+        case "cliente": {
+          const nameA = (a.nombre_contacto ?? "zzz").toLowerCase();
+          const nameB = (b.nombre_contacto ?? "zzz").toLowerCase();
+          return nameA.localeCompare(nameB, "es-AR");
+        }
+        case "estado": {
+          const prioA = ESTADO_PRIORIDAD[a.estado] ?? 99;
+          const prioB = ESTADO_PRIORIDAD[b.estado] ?? 99;
+          if (prioA !== prioB) {
+            return prioA - prioB;
+          }
+          return timeA - timeB;
+        }
+      }
+    });
+  }, [services, searchFilter, statusFilter, typeFilter, sortBy]);
+
   function handleFormChange(
     event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
   ) {
@@ -407,13 +514,17 @@ export default function AdminPage() {
     setFormError(null);
 
     try {
+      const zonaConReferencia = formData.direccion.trim()
+        ? `${formData.zona} · ${formData.direccion.trim()}`
+        : formData.zona;
+
       const response = await fetch(CREATE_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id_usuario: formData.usuarioId,
           tipo_servicio: formData.tipoServicio,
-          zona: formData.zona,
+          zona: zonaConReferencia.slice(0, 120),
           fecha_hora: new Date(formData.fechaHora).toISOString(),
           id_equipo: null,
           estado: "solicitado",
@@ -466,12 +577,17 @@ export default function AdminPage() {
     setClientFormError(null);
 
     try {
+      const preferenciasCombinadas = combinarDireccionYPreferencias(
+        clientFormData.direccion,
+        clientFormData.preferencias,
+      );
+
       const response = await fetch(USERS_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           zona: clientFormData.zona,
-          preferencias: clientFormData.preferencias.trim() || null,
+          preferencias: preferenciasCombinadas,
           contacto_familiar: {
             relacion: "responsable",
             canal: clientFormData.contacto.trim(),
@@ -681,6 +797,11 @@ export default function AdminPage() {
     },
   ];
 
+  const hasActiveFilters =
+    searchFilter.trim() !== "" ||
+    statusFilter !== "todos" ||
+    typeFilter !== "todos";
+
   return (
     <main className="min-h-screen w-full overflow-x-hidden bg-slate-100 text-slate-900">
       <div className="mx-auto flex min-h-screen max-w-[1600px]">
@@ -691,7 +812,7 @@ export default function AdminPage() {
             </div>
             <div>
               <p className="text-lg font-bold tracking-tight text-white">GoldenCare</p>
-              <p className="text-xs text-slate-400">Coordinación operativa</p>
+              <p className="text-xs text-slate-400">San Pedro de Jujuy</p>
             </div>
           </div>
 
@@ -744,13 +865,13 @@ export default function AdminPage() {
           <header className="flex flex-col gap-5 border-b border-slate-200 pb-8 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-700">
-                Panel del coordinador
+                Panel del coordinador · San Pedro de Jujuy
               </p>
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
                 Resumen operativo
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-slate-500 sm:text-base">
-                Una vista general de la demanda y los servicios que requieren seguimiento.
+                Gestión en tiempo real de traslados, acompañamientos y mandados por barrio y urgencia.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
@@ -828,9 +949,104 @@ export default function AdminPage() {
                   Registrar Nuevo Servicio
                 </button>
                 <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">
-                  {isLoading ? "Cargando..." : `${services.length} servicios`}
+                  {isLoading
+                    ? "Cargando..."
+                    : `${filteredAndSortedServices.length} de ${services.length}`}
                 </span>
               </div>
+            </div>
+
+            {/* Barra de búsqueda, filtros y ordenamiento */}
+            <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4 sm:px-6">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+                <div className="md:col-span-5">
+                  <label htmlFor="admin-search" className="sr-only">
+                    Buscar por cliente, barrio, dirección o código ID
+                  </label>
+                  <input
+                    id="admin-search"
+                    type="text"
+                    value={searchFilter}
+                    onChange={(event) => setSearchFilter(event.target.value)}
+                    placeholder="🔍 Buscar por cliente, barrio, dirección o ID..."
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label htmlFor="filter-estado" className="sr-only">
+                    Filtrar por estado
+                  </label>
+                  <select
+                    id="filter-estado"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  >
+                    <option value="todos">Estado: Todos</option>
+                    <option value="solicitado">Solicitado</option>
+                    <option value="asignado">Asignado</option>
+                    <option value="en curso">En curso</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label htmlFor="filter-tipo" className="sr-only">
+                    Filtrar por tipo de servicio
+                  </label>
+                  <select
+                    id="filter-tipo"
+                    value={typeFilter}
+                    onChange={(event) => setTypeFilter(event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  >
+                    <option value="todos">Tipo: Todos</option>
+                    <option value="traslado">Traslado</option>
+                    <option value="acompañamiento">Acompañamiento</option>
+                    <option value="mandado">Mandado</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-3">
+                  <label htmlFor="sort-by" className="sr-only">
+                    Ordenar servicios por
+                  </label>
+                  <select
+                    id="sort-by"
+                    value={sortBy}
+                    onChange={(event) =>
+                      setSortBy(event.target.value as SortCriterion)
+                    }
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  >
+                    <option value="urgencia">Ordenar: Urgencia (Prioridad)</option>
+                    <option value="fecha">Ordenar: Fecha más próxima</option>
+                    <option value="cliente">Ordenar: Cliente (A-Z)</option>
+                    <option value="estado">Ordenar: Estado operativo</option>
+                  </select>
+                </div>
+              </div>
+
+              {hasActiveFilters && (
+                <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                  <span>
+                    Mostrando {filteredAndSortedServices.length} resultado
+                    {filteredAndSortedServices.length === 1 ? "" : "s"} filtrado
+                    {filteredAndSortedServices.length === 1 ? "" : "s"}.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchFilter("");
+                      setStatusFilter("todos");
+                      setTypeFilter("todos");
+                    }}
+                    className="font-semibold text-cyan-700 hover:underline"
+                  >
+                    Limpiar filtros
+                  </button>
+                </div>
+              )}
             </div>
 
             {statusError && (
@@ -849,10 +1065,18 @@ export default function AdminPage() {
                   <div key={row} className="h-12 animate-pulse rounded-lg bg-slate-100" />
                 ))}
               </div>
-            ) : services.length === 0 ? (
+            ) : filteredAndSortedServices.length === 0 ? (
               <div className="px-6 py-14 text-center">
-                <p className="font-semibold text-slate-700">No hay servicios pendientes</p>
-                <p className="mt-1 text-sm text-slate-500">Las nuevas solicitudes aparecerán aquí.</p>
+                <p className="font-semibold text-slate-700">
+                  {services.length === 0
+                    ? "No hay servicios pendientes"
+                    : "No hay servicios que coincidan con los filtros"}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {services.length === 0
+                    ? "Las nuevas solicitudes aparecerán aquí."
+                    : "Probá cambiando el término de búsqueda o limpiando los filtros."}
+                </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -862,92 +1086,103 @@ export default function AdminPage() {
                       <th scope="col" className="px-6 py-4 font-semibold">ID</th>
                       <th scope="col" className="px-6 py-4 font-semibold">Cliente / Contacto</th>
                       <th scope="col" className="px-6 py-4 font-semibold">Tipo de Servicio</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Zona</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Fecha</th>
+                      <th scope="col" className="px-6 py-4 font-semibold">Barrio / Sector</th>
+                      <th scope="col" className="px-6 py-4 font-semibold">Fecha y Urgencia</th>
                       <th scope="col" className="px-6 py-4 font-semibold">Prestador Asignado</th>
                       <th scope="col" className="px-6 py-4 font-semibold">Estado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {services.map((service) => (
-                      <tr key={service.id_servicio} className="transition hover:bg-slate-50">
-                        <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-slate-500">
-                          {service.id_servicio.slice(0, 8)}…
-                        </td>
-                        <td className="max-w-xs px-6 py-4">
-                          <p className="font-semibold text-slate-900">
-                            {service.nombre_contacto?.trim() || "Sin contacto registrado"}
-                          </p>
-                          {service.preferencias?.trim() && (
-                            <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
-                              {service.preferencias}
+                    {filteredAndSortedServices.map((service) => {
+                      const urgent = isServiceUrgent(service, nowMs);
+                      return (
+                        <tr key={service.id_servicio} className="transition hover:bg-slate-50">
+                          <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-slate-500">
+                            {service.id_servicio.slice(0, 8)}…
+                          </td>
+                          <td className="max-w-xs px-6 py-4">
+                            <p className="font-semibold text-slate-900">
+                              {service.nombre_contacto?.trim() || "Sin contacto registrado"}
                             </p>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 font-semibold capitalize text-slate-800">
-                          {service.tipo_servicio}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4 text-slate-600">{service.zona}</td>
-                        <td className="whitespace-nowrap px-6 py-4 text-slate-600">
-                          {formatDate(service.fecha_hora)}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4">
-                          <select
-                            value={service.id_prestador_asignado || ""}
-                            onChange={(event) =>
-                              void handleAssignProvider(
-                                service.id_servicio,
-                                event.target.value,
-                              )
-                            }
-                            disabled={
-                              assigningServiceId === service.id_servicio ||
-                              providers.length === 0
-                            }
-                            aria-label={`Asignar prestador al servicio ${service.id_servicio}`}
-                            className={`max-w-[220px] cursor-pointer rounded-xl border px-3 py-1.5 text-xs font-medium outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-60 ${
-                              service.id_prestador_asignado
-                                ? "border-cyan-200 bg-cyan-50/70 text-cyan-900"
-                                : "border-slate-200 bg-white text-slate-600"
-                            }`}
-                          >
-                            <option value="">
-                              {providers.length === 0
-                                ? "Sin prestadores (+ Nuevo Prestador)"
-                                : "Sin asignar (Seleccionar...)"}
-                            </option>
-                            {providers.map((provider) => (
-                              <option
-                                key={provider.id_prestador}
-                                value={provider.id_prestador}
-                              >
-                                {provider.rol}
+                            {service.preferencias?.trim() && (
+                              <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
+                                {service.preferencias}
+                              </p>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 font-semibold capitalize text-slate-800">
+                            {service.tipo_servicio}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-slate-600">{service.zona}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-slate-600">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>{formatDate(service.fecha_hora)}</span>
+                              {urgent && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-rose-800 ring-1 ring-inset ring-rose-600/25">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
+                                  Urgente
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4">
+                            <select
+                              value={service.id_prestador_asignado || ""}
+                              onChange={(event) =>
+                                void handleAssignProvider(
+                                  service.id_servicio,
+                                  event.target.value,
+                                )
+                              }
+                              disabled={
+                                assigningServiceId === service.id_servicio ||
+                                providers.length === 0
+                              }
+                              aria-label={`Asignar prestador al servicio ${service.id_servicio}`}
+                              className={`max-w-[220px] cursor-pointer rounded-xl border px-3 py-1.5 text-xs font-medium outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-60 ${
+                                service.id_prestador_asignado
+                                  ? "border-cyan-200 bg-cyan-50/70 text-cyan-900"
+                                  : "border-slate-200 bg-white text-slate-600"
+                              }`}
+                            >
+                              <option value="">
+                                {providers.length === 0
+                                  ? "Sin prestadores (+ Nuevo Prestador)"
+                                  : "Sin asignar (Seleccionar...)"}
                               </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4">
-                          <select
-                            value={service.estado}
-                            onChange={(event) =>
-                              void handleStatusChange(
-                                service.id_servicio,
-                                event.target.value as EstadoServicio,
-                              )
-                            }
-                            disabled={updatingServiceId === service.id_servicio}
-                            aria-label={`Actualizar estado del servicio ${service.id_servicio}`}
-                            className={`cursor-pointer rounded-full border-0 px-3 py-1 text-xs font-semibold ring-1 ring-inset outline-none transition focus:ring-2 focus:ring-cyan-500 disabled:cursor-wait disabled:opacity-60 ${statusClass(service.estado)}`}
-                          >
-                            {serviceStatuses.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
+                              {providers.map((provider) => (
+                                <option
+                                  key={provider.id_prestador}
+                                  value={provider.id_prestador}
+                                >
+                                  {provider.rol}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4">
+                            <select
+                              value={service.estado}
+                              onChange={(event) =>
+                                void handleStatusChange(
+                                  service.id_servicio,
+                                  event.target.value as EstadoServicio,
+                                )
+                              }
+                              disabled={updatingServiceId === service.id_servicio}
+                              aria-label={`Actualizar estado del servicio ${service.id_servicio}`}
+                              className={`cursor-pointer rounded-full border-0 px-3 py-1 text-xs font-semibold ring-1 ring-inset outline-none transition focus:ring-2 focus:ring-cyan-500 disabled:cursor-wait disabled:opacity-60 ${statusClass(service.estado)}`}
+                            >
+                              {serviceStatuses.map((status) => (
+                                <option key={status} value={status}>
+                                  {status}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -956,7 +1191,7 @@ export default function AdminPage() {
 
           <section id="indicadores" className="mt-6 flex flex-col gap-4 rounded-2xl bg-slate-950 px-6 py-5 text-white sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-cyan-300">GoldenCare Analytics</p>
+              <p className="text-sm font-semibold text-cyan-300">GoldenCare Analytics · San Pedro de Jujuy</p>
               <p className="mt-1 text-sm text-slate-300">
                 Satisfacción promedio actual:{" "}
                 <strong className="text-amber-300">{formattedRating}</strong> (
@@ -1054,7 +1289,7 @@ export default function AdminPage() {
 
               <div>
                 <label htmlFor="zona" className="mb-2 block text-sm font-semibold text-slate-700">
-                  Zona
+                  Barrio / Sector (San Pedro de Jujuy)
                 </label>
                 <select
                   id="zona"
@@ -1064,10 +1299,27 @@ export default function AdminPage() {
                   required
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                 >
-                  <option value="Zona Centro">Zona Centro</option>
-                  <option value="Barrio Norte">Barrio Norte</option>
-                  <option value="Zona Sur">Zona Sur</option>
+                  {BARRIOS_SAN_PEDRO.map((barrio) => (
+                    <option key={barrio} value={barrio}>
+                      {barrio}
+                    </option>
+                  ))}
                 </select>
+              </div>
+
+              <div>
+                <label htmlFor="direccion" className="mb-2 block text-sm font-semibold text-slate-700">
+                  Dirección o referencia exacta
+                </label>
+                <input
+                  id="direccion"
+                  name="direccion"
+                  type="text"
+                  value={formData.direccion}
+                  onChange={handleFormChange}
+                  placeholder="Ej. Av. Siria 250 o Cerca del Hospital Paterson"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                />
               </div>
 
               <div>
@@ -1160,7 +1412,7 @@ export default function AdminPage() {
                   onChange={(event) =>
                     setClientFormData((current) => ({ ...current, contacto: event.target.value }))
                   }
-                  placeholder="Ej. Ana Pérez - 388 412 3456"
+                  placeholder="Ej. Ana Pérez - 3888 412345"
                   required
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                 />
@@ -1168,7 +1420,7 @@ export default function AdminPage() {
 
               <div>
                 <label htmlFor="clientZona" className="mb-2 block text-sm font-semibold text-slate-700">
-                  Zona
+                  Barrio / Sector (San Pedro de Jujuy)
                 </label>
                 <select
                   id="clientZona"
@@ -1183,15 +1435,37 @@ export default function AdminPage() {
                   required
                   className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                 >
-                  <option value="Zona Centro">Zona Centro</option>
-                  <option value="Barrio Norte">Barrio Norte</option>
-                  <option value="Zona Sur">Zona Sur</option>
+                  {BARRIOS_SAN_PEDRO.map((barrio) => (
+                    <option key={barrio} value={barrio}>
+                      {barrio}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <div>
+                <label htmlFor="clientDireccion" className="mb-2 block text-sm font-semibold text-slate-700">
+                  Dirección o referencia exacta
+                </label>
+                <input
+                  id="clientDireccion"
+                  name="clientDireccion"
+                  type="text"
+                  value={clientFormData.direccion}
+                  onChange={(event) =>
+                    setClientFormData((current) => ({
+                      ...current,
+                      direccion: event.target.value,
+                    }))
+                  }
+                  placeholder="Ej. Av. Siria 250 o Cerca del Hospital Paterson"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                />
+              </div>
+
+              <div>
                 <label htmlFor="preferencias" className="mb-2 block text-sm font-semibold text-slate-700">
-                  Preferencias
+                  Preferencias / Notas adicionales
                 </label>
                 <textarea
                   id="preferencias"
@@ -1203,8 +1477,8 @@ export default function AdminPage() {
                       preferencias: event.target.value,
                     }))
                   }
-                  rows={3}
-                  placeholder="Horarios, tipo de asistencia u otras preferencias"
+                  rows={2}
+                  placeholder="Horarios, movilidad u otras preferencias"
                   className="w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                 />
               </div>

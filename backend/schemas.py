@@ -127,7 +127,19 @@ class EncuestaRead(EncuestaCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
-ZonaPermitida = Literal["Zona Centro", "Barrio Norte", "Zona Sur"]
+BARRIOS_SAN_PEDRO = (
+    "Centro / Microcentro",
+    "Barrio Belgrano",
+    "Barrio Patricios",
+    "Barrio San Martín",
+    "Barrio Providencia",
+    "Barrio Ejército del Norte",
+    "Barrio Güemes / Bernacchi",
+    "Barrio 23 de Agosto / La Merced",
+    "La Esperanza",
+    "Otro barrio de San Pedro",
+)
+
 TipoServicioPermitido = Literal["traslado", "acompañamiento", "mandado"]
 
 
@@ -135,17 +147,17 @@ class PedidoPublicoCreate(BaseModel):
     """Datos unificados enviados desde el portal público de solicitud de servicios."""
 
     nombre_contacto: str = Field(min_length=1, max_length=80)
-    zona: ZonaPermitida
+    zona: str = Field(min_length=1, max_length=120)
     tipo_servicio: TipoServicioPermitido
     fecha_hora: datetime
     preferencias: Optional[str] = None
 
-    @field_validator("nombre_contacto")
+    @field_validator("nombre_contacto", "zona")
     @classmethod
-    def validar_nombre_contacto(cls, valor: str) -> str:
+    def validar_texto_no_vacio(cls, valor: str) -> str:
         limpio = valor.strip()
         if not limpio:
-            raise ValueError("El nombre o contacto no puede estar vacío.")
+            raise ValueError("El campo no puede estar vacío.")
         return limpio
 
 
