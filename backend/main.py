@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Generator
 from uuid import UUID
 
@@ -67,6 +68,7 @@ except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./goldencare.db")
+DATABASE_URL = re.sub(r"^postgres(ql)?://", "postgresql+psycopg://", DATABASE_URL)
 
 engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):

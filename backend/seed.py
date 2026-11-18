@@ -8,6 +8,7 @@ Ejecutar desde la raíz o desde la carpeta backend:
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
 
 DEFAULT_DATABASE = Path(__file__).resolve().parent / "goldencare.db"
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DATABASE.as_posix()}")
+DATABASE_URL = re.sub(r"^postgres(ql)?://", "postgresql+psycopg://", DATABASE_URL)
 
 engine_kwargs: dict[str, Any] = {}
 if DATABASE_URL.startswith("sqlite"):
