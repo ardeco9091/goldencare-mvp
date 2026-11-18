@@ -5,12 +5,9 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   BARRIOS_SAN_PEDRO,
   combinarDireccionYPreferencias,
+  getApiBaseUrl,
   type BarrioSanPedro,
 } from "./constants/barrios";
-
-const CREATE_PUBLIC_ORDER_URL = "http://127.0.0.1:8000/pedidos/publico";
-const CONSULT_PUBLIC_ORDER_URL = "http://127.0.0.1:8000/pedidos/consultar";
-const SERVICE_SURVEY_BASE_URL = "http://127.0.0.1:8000/servicios";
 
 type TipoServicio = "traslado" | "acompañamiento" | "mandado";
 type Zona = BarrioSanPedro | string;
@@ -206,7 +203,7 @@ export default function ClientPortalPage() {
 
     try {
       const response = await fetch(
-        `${SERVICE_SURVEY_BASE_URL}/${encodeURIComponent(idServicio)}/encuesta`,
+        `${getApiBaseUrl()}/servicios/${encodeURIComponent(idServicio)}/encuesta`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -268,7 +265,7 @@ export default function ClientPortalPage() {
 
     try {
       const response = await fetch(
-        `${CONSULT_PUBLIC_ORDER_URL}/${encodeURIComponent(clean)}`,
+        `${getApiBaseUrl()}/pedidos/consultar/${encodeURIComponent(clean)}`,
         { cache: "no-store" },
       );
       if (!response.ok) {
@@ -366,7 +363,7 @@ export default function ClientPortalPage() {
         preferencias,
       );
 
-      const response = await fetch(CREATE_PUBLIC_ORDER_URL, {
+      const response = await fetch(`${getApiBaseUrl()}/pedidos/publico`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -445,7 +442,7 @@ export default function ClientPortalPage() {
 
     try {
       const response = await fetch(
-        `${CONSULT_PUBLIC_ORDER_URL}/${encodeURIComponent(cleanQuery)}`,
+        `${getApiBaseUrl()}/pedidos/consultar/${encodeURIComponent(cleanQuery)}`,
         { cache: "no-store" },
       );
 

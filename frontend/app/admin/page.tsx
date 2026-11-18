@@ -13,14 +13,9 @@ import {
 import {
   BARRIOS_SAN_PEDRO,
   combinarDireccionYPreferencias,
+  getApiBaseUrl,
   type BarrioSanPedro,
 } from "../constants/barrios";
-
-const API_URL = "http://127.0.0.1:8000/servicios/pendientes";
-const CREATE_API_URL = "http://127.0.0.1:8000/servicios/";
-const USERS_API_URL = "http://127.0.0.1:8000/usuarios/";
-const PROVIDERS_API_URL = "http://127.0.0.1:8000/prestadores/";
-const METRICS_API_URL = "http://127.0.0.1:8000/metricas";
 
 type EstadoServicio =
   | "solicitado"
@@ -219,6 +214,7 @@ export default function AdminPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
 
   const silentRefreshAll = useCallback(async (signal?: AbortSignal) => {
+    const baseUrl = getApiBaseUrl();
     try {
       const [
         servicesResponse,
@@ -226,10 +222,10 @@ export default function AdminPage() {
         usersResponse,
         providersResponse,
       ] = await Promise.all([
-        fetch(API_URL, { cache: "no-store", signal }),
-        fetch(METRICS_API_URL, { cache: "no-store", signal }),
-        fetch(USERS_API_URL, { cache: "no-store", signal }),
-        fetch(PROVIDERS_API_URL, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/servicios/pendientes`, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/metricas`, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/usuarios/`, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/prestadores/`, { cache: "no-store", signal }),
       ]);
 
       if (!servicesResponse.ok || !metricsResponse.ok) {
@@ -270,12 +266,13 @@ export default function AdminPage() {
   }, []);
 
   const loadServices = useCallback(async (signal?: AbortSignal) => {
+    const baseUrl = getApiBaseUrl();
     try {
       setError(null);
 
       const [servicesResponse, metricsResponse] = await Promise.all([
-        fetch(API_URL, { cache: "no-store", signal }),
-        fetch(METRICS_API_URL, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/servicios/pendientes`, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/metricas`, { cache: "no-store", signal }),
       ]);
 
       if (!servicesResponse.ok) {
@@ -307,7 +304,9 @@ export default function AdminPage() {
   }, []);
 
   const loadUsers = useCallback(async () => {
-    const response = await fetch(USERS_API_URL, { cache: "no-store" });
+    const response = await fetch(`${getApiBaseUrl()}/usuarios/`, {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error("No se pudieron cargar las personas usuarias.");
     }
@@ -317,7 +316,9 @@ export default function AdminPage() {
   }, []);
 
   const loadProviders = useCallback(async () => {
-    const response = await fetch(PROVIDERS_API_URL, { cache: "no-store" });
+    const response = await fetch(`${getApiBaseUrl()}/prestadores/`, {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error("No se pudieron cargar los prestadores.");
     }
@@ -329,29 +330,40 @@ export default function AdminPage() {
   // Carga inicial
   useEffect(() => {
     const controller = new AbortController();
+    const baseUrl = getApiBaseUrl();
 
     Promise.all([
-      fetch(API_URL, { cache: "no-store", signal: controller.signal }).then((response) => {
+      fetch(`${baseUrl}/servicios/pendientes`, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then((response) => {
         if (!response.ok) {
           throw new Error("No se pudieron cargar los servicios pendientes.");
         }
         return response.json() as Promise<Servicio[]>;
       }),
-      fetch(USERS_API_URL, { cache: "no-store", signal: controller.signal }).then((response) => {
+      fetch(`${baseUrl}/usuarios/`, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then((response) => {
         if (!response.ok) {
           throw new Error("No se pudieron cargar las personas usuarias.");
         }
         return response.json() as Promise<Usuario[]>;
       }),
-      fetch(PROVIDERS_API_URL, { cache: "no-store", signal: controller.signal }).then(
-        (response) => {
-          if (!response.ok) {
-            throw new Error("No se pudieron cargar los prestadores.");
-          }
-          return response.json() as Promise<Prestador[]>;
-        },
-      ),
-      fetch(METRICS_API_URL, { cache: "no-store", signal: controller.signal }).then((response) => {
+      fetch(`${baseUrl}/prestadores/`, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error("No se pudieron cargar los prestadores.");
+        }
+        return response.json() as Promise<Prestador[]>;
+      }),
+      fetch(`${baseUrl}/metricas`, {
+        cache: "no-store",
+        signal: controller.signal,
+      }).then((response) => {
         if (!response.ok) {
           throw new Error("No se pudieron cargar las métricas operativas.");
         }
@@ -518,7 +530,7 @@ export default function AdminPage() {
         ? `${formData.zona} · ${formData.direccion.trim()}`
         : formData.zona;
 
-      const response = await fetch(CREATE_API_URL, {
+      const response = await fetch(`${getApiBaseUrl()}/servicios/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -582,7 +594,7 @@ export default function AdminPage() {
         clientFormData.preferencias,
       );
 
-      const response = await fetch(USERS_API_URL, {
+      const response = await fetch(`${getApiBaseUrl()}/usuarios/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -636,7 +648,7 @@ export default function AdminPage() {
     setProviderFormError(null);
 
     try {
-      const response = await fetch(PROVIDERS_API_URL, {
+      const response = await fetch(`${getApiBaseUrl()}/prestadores/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -679,7 +691,7 @@ export default function AdminPage() {
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/servicios/${encodeURIComponent(idServicio)}/asignar`,
+        `${getApiBaseUrl()}/servicios/${encodeURIComponent(idServicio)}/asignar`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -714,7 +726,7 @@ export default function AdminPage() {
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/servicios/${encodeURIComponent(idServicio)}/estado`,
+        `${getApiBaseUrl()}/servicios/${encodeURIComponent(idServicio)}/estado`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },

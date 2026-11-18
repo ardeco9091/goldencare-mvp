@@ -35,3 +35,12 @@ export function combinarDireccionYPreferencias(
   }
   return null;
 }
+
+/**
+ * Devuelve la ruta base del proxy de Next.js (/api) que redirige hacia FastAPI (127.0.0.1:8000)
+ * tanto en localhost:3000 como desde dispositivos móviles o túneles externos.
+ */
+export function getApiBaseUrl(): string {
+  return "/api";
+}
+

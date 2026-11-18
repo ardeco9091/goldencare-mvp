@@ -82,7 +82,7 @@ app = FastAPI(title="GoldenCare API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -115,6 +115,7 @@ def _usuario_a_respuesta(usuario: Persona_Usuaria) -> PersonaUsuariaRead:
     )
 
 
+@app.post("/usuarios", response_model=PersonaUsuariaRead, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 @app.post("/usuarios/", response_model=PersonaUsuariaRead, status_code=status.HTTP_201_CREATED)
 def crear_usuario(payload: PersonaUsuariaCreate, db: Session = Depends(get_db)) -> PersonaUsuariaRead:
     """Registra una persona usuaria y su contacto familiar asociado."""
@@ -147,6 +148,7 @@ def crear_usuario(payload: PersonaUsuariaCreate, db: Session = Depends(get_db)) 
     return _usuario_a_respuesta(usuario)
 
 
+@app.get("/usuarios", response_model=list[PersonaUsuariaRead], include_in_schema=False)
 @app.get("/usuarios/", response_model=list[PersonaUsuariaRead])
 def listar_usuarios(db: Session = Depends(get_db)) -> list[PersonaUsuariaRead]:
     """Devuelve las personas usuarias disponibles para nuevas solicitudes."""
@@ -160,6 +162,7 @@ def listar_usuarios(db: Session = Depends(get_db)) -> list[PersonaUsuariaRead]:
     return [_usuario_a_respuesta(usuario) for usuario in usuarios]
 
 
+@app.post("/servicios", response_model=ServicioRead, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 @app.post("/servicios/", response_model=ServicioRead, status_code=status.HTTP_201_CREATED)
 def crear_servicio(payload: ServicioCreate, db: Session = Depends(get_db)) -> Servicio:
     """Registra una nueva solicitud de servicio para GoldenCare."""
@@ -266,6 +269,7 @@ def _servicio_a_respuesta(servicio: Servicio) -> ServicioRead:
     )
 
 
+@app.get("/prestadores", response_model=list[PrestadorRead], include_in_schema=False)
 @app.get("/prestadores/", response_model=list[PrestadorRead])
 def listar_prestadores(db: Session = Depends(get_db)) -> list[Prestador]:
     """Devuelve los prestadores activos y disponibles para asignar a servicios."""
@@ -278,6 +282,12 @@ def listar_prestadores(db: Session = Depends(get_db)) -> list[Prestador]:
     return list(db.scalars(consulta).all())
 
 
+@app.post(
+    "/prestadores",
+    response_model=PrestadorRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
 @app.post(
     "/prestadores/",
     response_model=PrestadorRead,
