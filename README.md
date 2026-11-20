@@ -1,137 +1,166 @@
 # GoldenCare MVP
 
-**GoldenCare** es una plataforma de coordinación de servicios de asistencia no médica (traslados, acompañamientos y mandados) diseñada para conectar de forma simple, accesible y en tiempo real a personas usuarias, sus familiares y el equipo de coordinación operativa.
+**GoldenCare MVP** es una plataforma web de coordinación de servicios de asistencia no médica para personas mayores (traslados, acompañamientos y mandados) diseñada específicamente para **San Pedro de Jujuy, Jujuy, Argentina**. Conecta en tiempo real a familias y personas usuarias con prestadores locales y el equipo de coordinación operativa mediante un flujo ágil **tipo Uber** y un modelo transparente de monetización (85% prestador / 15% comisión de plataforma).
 
 ---
 
-## Arquitectura General
+## 1. Identificación del Proyecto y Equipo
 
-El proyecto sigue una arquitectura desacoplada en dos aplicaciones dentro del monorepo:
+- **Sistema:** GoldenCare MVP — Plataforma de coordinación de asistencia no médica para personas mayores en San Pedro de Jujuy, Jujuy, Argentina.
+- **Empresa Cliente:** **NoveTech** — Fundador: **Ferrero Alejandro Martín** (Serapio Soria N.º 580, San Pedro de Jujuy, Jujuy).
+- **Equipo de Desarrollo (EDI II):**
+  - **Project Manager:** Tomás Francisco Ibáñez
+  - **Programador:** Ariel Artur de la Villarmois
+  - **Capacitador:** Lautaro Edgardo Lastra
+
+---
+
+## 2. Arquitectura y Stack Tecnológico en Producción
+
+El repositorio está organizado como un monorepo desacoplado (`backend/` + `frontend/`) con proxy interno `/api/:path*` en Next.js para operar bajo un único dominio sin fricciones de CORS.
 
 ```text
 goldencare-mvp/
-├── AGENTS.md                 # Reglas y convenciones del proyecto
-├── README.md                 # Documentación general y guía de ejecución
-├── backend/                  # API REST con FastAPI + SQLAlchemy + SQLite
-│   ├── main.py               # Endpoints y lógica de negocio
-│   ├── models.py             # Modelos relacionales SQLAlchemy
-│   ├── schemas.py            # Validación de esquemas con Pydantic v2
-│   ├── seed.py               # Carga determinista e idempotente de datos iniciales
-│   ├── requirements.txt      # Dependencias de Python
-│   └── goldencare.db         # Base de datos SQLite local
-└── frontend/                 # Aplicación web Next.js 16 (App Router)
+├── AGENTS.md                        # Reglas y convenciones técnicas del proyecto
+├── README.md                        # Documentación general, arquitectura y despliegue
+├── backend/                         # API REST con FastAPI + SQLAlchemy 2.0 + Pydantic v2
+│   ├── main.py                      # Endpoints, migración automática de columnas y lógica operativa
+│   ├── models.py                    # Modelos relacionales (Persona_Usuaria, Servicio, Prestador, Asignacion, Encuesta...)
+│   ├── schemas.py                   # Validación de entrada/salida con Pydantic v2
+│   ├── seed.py                      # Carga determinista e idempotente de datos de San Pedro de Jujuy
+│   ├── requirements.txt             # Dependencias de Python (incluye psycopg[binary])
+│   └── goldencare.db                # Base de datos SQLite para desarrollo local
+└── frontend/                        # Aplicación web Next.js 16 (App Router) + React 19
+    ├── next.config.ts               # Proxy /api/:path* hacia NEXT_PUBLIC_API_URL (Render o local)
     ├── app/
-    │   ├── layout.tsx        # Layout raíz en español (es-AR)
-    │   ├── page.tsx          # Portal Público del Cliente (/)
+    │   ├── layout.tsx               # Layout raíz en español (es-AR)
+    │   ├── globals.css              # Estilos globales Tailwind CSS v4
+    │   ├── constants/
+    │   │   └── barrios.ts           # Barrios de San Pedro de Jujuy, tarifas ARS y helpers compartidos
+    │   ├── page.tsx                 # Portal Público del Cliente (/)
+    │   ├── prestador/
+    │   │   └── page.tsx             # Portal Operativo del Prestador (/prestador)
     │   └── admin/
-    │       └── page.tsx      # Panel Operativo del Coordinador (/admin)
+    │       └── page.tsx             # Panel del Coordinador (/admin)
     ├── package.json
     └── tsconfig.json
 ```
 
-### Stack Tecnológico
-- **Backend:** Python 3.10+ · FastAPI · SQLAlchemy 2.0 · Pydantic v2 · SQLite (`backend/goldencare.db`) en `http://127.0.0.1:8000`.
-- **Frontend:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 (paleta de alto contraste `slate` + `cyan`) en `http://localhost:3000`.
+### Despliegue Cloud y Entornos
+
+| Capa | Tecnología | Entorno de Producción | Desarrollo Local |
+|---|---|---|---|
+| **Frontend** | Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 | **Vercel:** `https://goldencare-mvp.vercel.app` | `http://localhost:3000` |
+| **Backend** | Python 3.12.8 · FastAPI · SQLAlchemy 2.0 · Pydantic v2 · `psycopg[binary]` | **Render:** `https://goldencare-backend-9cb3.onrender.com` | `http://127.0.0.1:8000` |
+| **Base de Datos** | PostgreSQL (producción) / SQLite (local) | **Supabase** (Sudamérica — São Paulo) con migración automática al inicio | `backend/goldencare.db` |
+
+> **Migración automática segura:** Al iniciar FastAPI, `asegurar_columnas_monetizacion()` verifica el esquema de la tabla `servicio` y ejecuta `ALTER TABLE servicio ADD COLUMN IF NOT EXISTS ...` en PostgreSQL (o su equivalente seguro en SQLite) para `monto_total`, `comision_plataforma` y `pago_prestador`, recalculando registros previos sin pérdida de datos.
 
 ---
 
-## Módulos y Rutas del Frontend
+## 3. Los 3 Portales Operativos y Flujo Tipo Uber
+
+### Modelo de Monetización y Tarifas (ARS)
+
+| Tipo de Servicio | Tarifa Cliente (`monto_total`) | Comisión GoldenCare (15%) | Ganancia Neta Prestador (85%) |
+|---|---:|---:|---:|
+| **Traslado** | `$ 6.500` | `$ 975` | `$ 5.525` |
+| **Acompañamiento** | `$ 5.000` | `$ 750` | `$ 4.250` |
+| **Mandados** | `$ 4.000` | `$ 600` | `$ 3.400` |
 
 ### 1. Portal Público del Cliente (`/`)
-Interfaz accesible, clara y 100% *mobile-first* orientada a personas usuarias y familiares:
-- **Solicitar un Servicio:** Flujo guiado en 3 pasos para elegir el tipo de asistencia (`traslado`, `acompañamiento` o `mandado`), zona (`Zona Centro`, `Barrio Norte`, `Zona Sur`), fecha/hora y datos de contacto con notas o preferencias.
-- **Comprobante con Código Corto:** Genera un código único de 8 caracteres con botón de copiado rápido y estado en vivo.
-- **Seguir mi Pedido:** Buscador por código de 8 caracteres o por nombre/teléfono, con barra visual de progreso, explicación de cada etapa, visualización del **profesional asignado** y auto-refresco silencioso cada 4 segundos.
-- **Encuesta de Satisfacción:** Cuando el servicio pasa a estado `completado`, habilita automáticamente la calificación de 1 a 5 estrellas (`★`) y comentario opcional, tanto en el comprobante en vivo como en la pestaña de seguimiento.
+- **Acceso limpio para familias:** sin botones ni enlaces administrativos expuestos en el header ni en el footer.
+- **Solicitud guiada en 3 pasos:** elección de servicio con tarifa visible, barrios reales de San Pedro de Jujuy (`Centro / Microcentro`, `Barrio Belgrano`, `Barrio Patricios`, `Barrio San Martín`, `Barrio Providencia`, `Barrio Ejército del Norte`, `Barrio Güemes / Bernacchi`, `Barrio 23 de Agosto / La Merced`, `La Esperanza`, `Otro barrio de San Pedro`), dirección/referencia exacta, fecha/hora y datos de contacto.
+- **Tarifa Estimada previa:** muestra el monto fijo transparente antes de confirmar el pedido.
+- **Seguimiento en vivo tipo Uber (auto-refresco cada 4 s):**
+  - Código único de 8 caracteres con copiado rápido y buscador por código o contacto.
+  - Estado `solicitado`: indicador animado *"Buscando prestador disponible en San Pedro..."*.
+  - Estados `asignado` y `en curso`: tarjeta destacada estilo Uber con iniciales, nombre, especialidad/rol del prestador asignado, estado en vivo y tarifa.
+  - Estado `completado`: habilita la **encuesta de satisfacción (1 a 5 estrellas + comentario opcional)**.
 
-### 2. Panel del Coordinador (`/admin`)
-Dashboard operativo para la gestión integral de la demanda en tiempo real:
-- **Métricas Operativas en Vivo:** Tarjetas sincronizadas con la base de datos para **Total Usuarios**, **Servicios Pendientes**, **Tasa de Cumplimiento** y **Satisfacción Promedio (`★`)**.
-- **Gestión de Clientes y Prestadores:** Modales ágiles para dar de alta nuevos clientes (`Persona_Usuaria` + `Contacto_Familiar`) y profesionales (`Prestador`).
-- **Asignación de Prestadores y Estados:** Tabla interactiva con datos de contacto y preferencias del cliente, selector directo de **Prestador Asignado** (que vincula la tabla `Asignacion` y pasa el servicio a `asignado`) y selector de estado operativo (`solicitado`, `asignado`, `en curso`, `completado`, `cancelado`).
-- **Sincronización Automática:** Refresco silencioso cada 4 segundos con pausa inteligente al abrir modales y tolerancia a reinicios del servidor.
+### 2. Portal del Prestador (`/prestador`)
+- **Interfaz mobile-first:** pensada para celulares de prestadores en terreno con sincronización automática cada 4 segundos.
+- **Perfil y Ganancias:** selector de perfil activo (`GET /prestadores/`), tarjeta de **Ganancias acumuladas (85%)** sobre servicios completados y monto **En curso / por cobrar**.
+- **Solicitudes Disponibles (estilo Uber):** lista en tiempo real de pedidos en estado `solicitado` con badge de urgencia, barrio, dirección, ganancia neta (85%) y botón **"Aceptar Pedido"** (`POST /servicios/{id_servicio}/aceptar-prestador`, con control de concurrencia `409 Conflict`).
+- **Mis Servicios:** gestión en un toque para avanzar el ciclo operativo (`asignado` → `en curso` → `completado`) e historial completado con valoraciones.
+
+### 3. Panel del Coordinador (`/admin`)
+- **Acceso operativo restringido:** acceso directo por ruta `/admin` (preparado para autenticación administrativa mediante credenciales de entorno `ADMIN_USER` / `ADMIN_PASSWORD` y token firmado HMAC-SHA256).
+- **Tarjetas completas sin scroll horizontal:** lista vertical de tarjetas independientes con borde izquierdo por estado (`solicitado` ámbar, `asignado` azul, `en curso` índigo, `completado` esmeralda, `cancelado` rojo), cabecera con ID/estado/urgencia/fecha y cuerpo en 3 columnas responsivas (Cliente y Ubicación completa sin truncar, Servicio y desglose de Tarifas, Prestador y controles directos).
+- **Pestañas y filtros inteligentes:** vistas de **Servicios Activos**, **Historial Completados** (con estrellas y comentario de encuesta) y **Todas**; búsqueda instantánea, filtros por estado/tipo y ordenamiento por **urgencia horaria (próximas 24 h)**.
+- **Métricas Operativas y Financieras:** Total de Usuarios, Servicios Pendientes, Tasa de Cumplimiento, Satisfacción Promedio (`★`) y **Comisiones GoldenCare (15%)** con ingresos brutos y comisiones proyectadas en curso.
+- **Gestión de equipo y demanda:** altas rápidas de clientes, prestadores y servicios.
 
 ---
 
-## Endpoints Principales de la API (`http://127.0.0.1:8000`)
+## 4. Endpoints Principales de la API
+
+En producción se consumen de forma transparente a través del proxy `/api/*` de Vercel hacia `https://goldencare-backend-9cb3.onrender.com`.
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| `POST` | `/pedidos/publico` | Registra un pedido desde el portal público (reutilizando o creando la `Persona_Usuaria` y `Contacto_Familiar`) y devuelve el código de seguimiento de 8 caracteres |
-| `GET` | `/pedidos/consultar/{codigo_o_contacto}` | Busca pedidos por código corto de 8 caracteres o coincidencia parcial en el nombre/teléfono de contacto |
-| `POST` | `/servicios/{id_servicio}/encuesta` | Registra la valoración (1 a 5 estrellas) y comentario en la tabla `Encuesta` para un servicio `completado` |
-| `GET` | `/servicios/pendientes` | Lista los servicios abiertos (`solicitado`, `asignado`, `en curso`) enriquecidos con contacto, preferencias y prestador asignado |
-| `POST` | `/servicios/` | Registra un nuevo servicio desde el panel del coordinador |
-| `POST` | `/servicios/{id_servicio}/asignar` | Crea o actualiza la `Asignacion` de un prestador y cambia automáticamente el estado a `asignado` |
-| `PATCH` | `/servicios/{id_servicio}/estado` | Actualiza el estado operativo de un servicio |
-| `GET` | `/metricas` | Devuelve métricas consolidadas en tiempo real (`total_usuarios`, `servicios_pendientes`, `servicios_completados`, `tasa_cumplimiento`, `promedio_valoracion`, `total_encuestas`) |
-| `GET` | `/usuarios/` | Lista las personas usuarias registradas con su contacto familiar |
-| `POST` | `/usuarios/` | Registra una nueva persona usuaria y su contacto responsable |
-| `GET` | `/prestadores/` | Lista los prestadores activos disponibles para asignación |
-| `POST` | `/prestadores/` | Registra un nuevo prestador operativo (`Nombre - Especialidad`) |
+| `POST` | `/pedidos/publico` | Crea un pedido desde `/`, calcula tarifa/comisión/neto, crea o reutiliza el usuario y devuelve código corto de 8 caracteres |
+| `GET` | `/pedidos/consultar/{codigo_o_contacto}` | Consulta pedidos por código de 8 caracteres o coincidencia parcial en nombre/teléfono |
+| `GET` | `/servicios/` | Lista todos los servicios enriquecidos (soporta filtros `?estado=` y `?id_prestador=`) |
+| `GET` | `/servicios/pendientes` | Lista los servicios abiertos (`solicitado`, `asignado`, `en curso`) |
+| `POST` | `/servicios/` | Registra un nuevo servicio desde el panel `/admin` con cálculo automático de tarifas |
+| `POST` | `/servicios/{id_servicio}/aceptar-prestador` | Permite a un prestador tomar un servicio `solicitado` (flujo Uber), creando la `Asignacion` y pasándolo a `asignado` |
+| `POST` | `/servicios/{id_servicio}/asignar` | Asigna o reasigna un prestador desde `/admin` y actualiza el estado a `asignado` |
+| `PATCH` | `/servicios/{id_servicio}/estado` | Actualiza el estado operativo (`solicitado`, `asignado`, `en curso`, `completado`, `cancelado`) |
+| `POST` | `/servicios/{id_servicio}/encuesta` | Registra la calificación (1–5 estrellas) y comentario para un servicio `completado` |
+| `GET` | `/metricas` | Métricas operativas y financieras en vivo (`ingresos_brutos`, `comisiones_plataforma`, `ingresos_proyectados`, `comisiones_proyectadas`, encuestas y cumplimiento) |
+| `GET` / `POST` | `/usuarios/` | Lista y registra personas usuarias con su contacto familiar |
+| `GET` / `POST` | `/prestadores/` | Lista y registra prestadores activos (`Nombre - Especialidad`) |
 
 ---
 
-## Guía de Instalación y Ejecución Local
+## 5. Variables de Entorno
+
+| Variable | Servicio | Descripción | Ejemplo |
+|---|---|---|---|
+| `DATABASE_URL` | Backend (Render) | Cadena de conexión PostgreSQL de Supabase (se normaliza automáticamente a `postgresql+psycopg://`). En local usa SQLite por defecto | `postgresql://postgres:***@aws-0-sa-east-1.pooler.supabase.com:6543/postgres` |
+| `PYTHON_VERSION` | Backend (Render) | Versión fija de Python para compatibilidad óptima con wheels binarios | `3.12.8` |
+| `ADMIN_USER` | Backend (Render) | Usuario administrativo para autenticación del coordinador | `admin` |
+| `ADMIN_PASSWORD` | Backend (Render) | Contraseña administrativa para firma/validación de sesión HMAC-SHA256 | `********` |
+| `NEXT_PUBLIC_API_URL` | Frontend (Vercel) | URL base del backend usada por `next.config.ts` en el rewrite `/api/:path*` | `https://goldencare-backend-9cb3.onrender.com` |
+
+---
+
+## 6. Guía de Ejecución Local y Verificación
 
 ### Requisitos previos
-- **Python** 3.10 o superior
-- **Node.js** 18.18 o superior y **npm**
+- **Python** 3.12+ (recomendado `3.12.8`)
+- **Node.js** 20+ y **npm**
 
-### 1. Levantar el Backend (FastAPI)
-
-Abrir una terminal en la raíz del proyecto (`goldencare-mvp`):
-
+### 1. Backend (FastAPI)
 ```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-*(Opcional)* Si PowerShell restringe la ejecución de scripts en la sesión actual:
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-
-Poblar o sincronizar los datos iniciales de demostración (script idempotente con 4 clientes, 3 prestadores, 6 servicios y 2 encuestas):
-```powershell
 python seed.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+- API local: `http://127.0.0.1:8000`
+- Swagger UI: `http://127.0.0.1:8000/docs`
 
-Iniciar el servidor FastAPI en el puerto `8000`:
-```powershell
-uvicorn main:app --reload --port 8000
-```
-- **API Base:** http://127.0.0.1:8000
-- **Documentación interactiva (Swagger UI):** http://127.0.0.1:8000/docs
-
-### 2. Levantar el Frontend (Next.js)
-
-Abrir una **segunda terminal** en la raíz del proyecto (`goldencare-mvp`):
-
+### 2. Frontend (Next.js)
 ```powershell
 cd frontend
 npm install
-npm run dev
+npm run dev -- -H 0.0.0.0
 ```
+- **Portal Público del Cliente:** `http://localhost:3000`
+- **Portal del Prestador:** `http://localhost:3000/prestador`
+- **Panel del Coordinador:** `http://localhost:3000/admin`
 
-Accesos en el navegador:
-- **Portal Público del Cliente:** http://localhost:3000
-- **Panel Operativo del Coordinador:** http://localhost:3000/admin
-
----
-
-## Verificación de Calidad y Compilación
-
-### Backend (Python)
+### 3. Comandos de Verificación
 ```powershell
+# Verificación de sintaxis del backend
 cd backend
 python -m py_compile models.py schemas.py main.py seed.py
-```
 
-### Frontend (TypeScript y Build de Producción)
-```powershell
+# Verificación de tipos y build de producción del frontend
 cd frontend
 npx tsc --noEmit
 npm run build
