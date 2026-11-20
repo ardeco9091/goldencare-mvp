@@ -13,7 +13,9 @@ import {
 import {
   BARRIOS_SAN_PEDRO,
   combinarDireccionYPreferencias,
+  formatearMonedaARS,
   getApiBaseUrl,
+  obtenerTarifaServicio,
   type BarrioSanPedro,
 } from "../constants/barrios";
 
@@ -25,6 +27,7 @@ type EstadoServicio =
   | "cancelado";
 
 type SortCriterion = "urgencia" | "fecha" | "cliente" | "estado";
+type AdminViewTab = "activos" | "completados" | "todas";
 
 type Servicio = {
   id_servicio: string;
@@ -37,6 +40,11 @@ type Servicio = {
   preferencias?: string | null;
   id_prestador_asignado?: string | null;
   prestador_asignado?: string | null;
+  monto_total?: number;
+  comision_plataforma?: number;
+  pago_prestador?: number;
+  valoracion?: number | null;
+  comentario_encuesta?: string | null;
 };
 
 type Usuario = {
@@ -61,6 +69,10 @@ type Metricas = {
   tasa_cumplimiento: number;
   promedio_valoracion: number | null;
   total_encuestas: number;
+  ingresos_brutos: number;
+  comisiones_plataforma: number;
+  ingresos_proyectados: number;
+  comisiones_proyectadas: number;
 };
 
 type NewServiceForm = {
@@ -108,6 +120,10 @@ const initialMetrics: Metricas = {
   tasa_cumplimiento: 100,
   promedio_valoracion: null,
   total_encuestas: 0,
+  ingresos_brutos: 0,
+  comisiones_plataforma: 0,
+  ingresos_proyectados: 0,
+  comisiones_proyectadas: 0,
 };
 
 const serviceStatuses: EstadoServicio[] = [
@@ -183,7 +199,8 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const consecutiveFailuresRef = useRef<number>(0);
 
-  // Filtros, búsqueda y ordenamiento de la tabla
+  // Pestaña activa y filtros, búsqueda y ordenamiento de la tabla
+  const [activeViewTab, setActiveViewTab] = useState<AdminViewTab>("activos");
   const [searchFilter, setSearchFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [typeFilter, setTypeFilter] = useState<string>("todos");
@@ -222,7 +239,7 @@ export default function AdminPage() {
         usersResponse,
         providersResponse,
       ] = await Promise.all([
-        fetch(`${baseUrl}/servicios/pendientes`, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/servicios/`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/metricas`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/usuarios/`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/prestadores/`, { cache: "no-store", signal }),
@@ -271,7 +288,7 @@ export default function AdminPage() {
       setError(null);
 
       const [servicesResponse, metricsResponse] = await Promise.all([
-        fetch(`${baseUrl}/servicios/pendientes`, { cache: "no-store", signal }),
+        fetch(`${baseUrl}/servicios/`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/metricas`, { cache: "no-store", signal }),
       ]);
 
@@ -333,12 +350,12 @@ export default function AdminPage() {
     const baseUrl = getApiBaseUrl();
 
     Promise.all([
-      fetch(`${baseUrl}/servicios/pendientes`, {
+      fetch(`${baseUrl}/servicios/`, {
         cache: "no-store",
         signal: controller.signal,
       }).then((response) => {
         if (!response.ok) {
-          throw new Error("No se pudieron cargar los servicios pendientes.");
+          throw new Error("No se pudieron cargar los servicios.");
         }
         return response.json() as Promise<Servicio[]>;
       }),
@@ -439,12 +456,51 @@ export default function AdminPage() {
     silentRefreshAll,
   ]);
 
+  const tabCounts = useMemo(() => {
+    let activos = 0;
+    let completados = 0;
+    for (const s of services) {
+      if (
+        s.estado === "solicitado" ||
+        s.estado === "asignado" ||
+        s.estado === "en curso"
+      ) {
+        activos += 1;
+      } else if (s.estado === "completado") {
+        completados += 1;
+      }
+    }
+    return {
+      activos,
+      completados,
+      todas: services.length,
+    };
+  }, [services]);
+
   // Filtrado y ordenamiento reactivo (conserva selección durante los auto-refrescos)
   const filteredAndSortedServices = useMemo(() => {
     const query = searchFilter.trim().toLowerCase();
 
     const filtered = services.filter((service) => {
-      if (statusFilter !== "todos" && service.estado !== statusFilter) {
+      if (activeViewTab === "activos") {
+        if (
+          service.estado !== "solicitado" &&
+          service.estado !== "asignado" &&
+          service.estado !== "en curso"
+        ) {
+          return false;
+        }
+      } else if (activeViewTab === "completados") {
+        if (service.estado !== "completado") {
+          return false;
+        }
+      }
+
+      if (
+        activeViewTab !== "completados" &&
+        statusFilter !== "todos" &&
+        service.estado !== statusFilter
+      ) {
         return false;
       }
       if (typeFilter !== "todos" && service.tipo_servicio !== typeFilter) {
@@ -473,6 +529,10 @@ export default function AdminPage() {
       const timeA = new Date(a.fecha_hora).getTime();
       const timeB = new Date(b.fecha_hora).getTime();
 
+      if (activeViewTab === "completados" && sortBy === "urgencia") {
+        return timeB - timeA;
+      }
+
       switch (sortBy) {
         case "urgencia": {
           const aIsSolicitado = a.estado === "solicitado" ? 0 : 1;
@@ -483,7 +543,7 @@ export default function AdminPage() {
           return timeA - timeB;
         }
         case "fecha":
-          return timeA - timeB;
+          return activeViewTab === "completados" ? timeB - timeA : timeA - timeB;
         case "cliente": {
           const nameA = (a.nombre_contacto ?? "zzz").toLowerCase();
           const nameB = (b.nombre_contacto ?? "zzz").toLowerCase();
@@ -499,7 +559,7 @@ export default function AdminPage() {
         }
       }
     });
-  }, [services, searchFilter, statusFilter, typeFilter, sortBy]);
+  }, [services, activeViewTab, searchFilter, statusFilter, typeFilter, sortBy]);
 
   function handleFormChange(
     event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
@@ -807,6 +867,18 @@ export default function AdminPage() {
       icon: "★",
       iconClass: "bg-amber-100 text-amber-700",
     },
+    {
+      label: "Comisiones GoldenCare (15%)",
+      value: isLoading
+        ? "—"
+        : formatearMonedaARS(metricsData.comisiones_plataforma),
+      detail:
+        metricsData.comisiones_proyectadas > 0
+          ? `Bruto: ${formatearMonedaARS(metricsData.ingresos_brutos)} · +${formatearMonedaARS(metricsData.comisiones_proyectadas)} en curso`
+          : `Ingresos brutos: ${formatearMonedaARS(metricsData.ingresos_brutos)}`,
+      icon: "$",
+      iconClass: "bg-cyan-100 text-cyan-800",
+    },
   ];
 
   const hasActiveFilters =
@@ -852,7 +924,15 @@ export default function AdminPage() {
             </a>
           </nav>
 
-          <div className="mt-auto space-y-4">
+          <div className="mt-auto space-y-3">
+            <Link
+              href="/prestador"
+              className="flex items-center justify-between rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-500/20 hover:text-white"
+            >
+              <span>🚗 Portal del Prestador</span>
+              <span className="text-cyan-300">/prestador</span>
+            </Link>
+
             <Link
               href="/"
               className="flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-xs font-semibold text-slate-300 transition hover:border-cyan-400/50 hover:bg-white/10 hover:text-white"
@@ -905,7 +985,7 @@ export default function AdminPage() {
             </div>
           </header>
 
-          <div id="resumen" className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div id="resumen" className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {cards.map((metric) => (
               <article
                 key={metric.label}
@@ -930,9 +1010,17 @@ export default function AdminPage() {
           <section id="servicios" className="mt-8 rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
               <div>
-                <h2 className="text-lg font-bold text-slate-950">Servicios pendientes</h2>
+                <h2 className="text-lg font-bold text-slate-950">
+                  {activeViewTab === "activos"
+                    ? "Servicios Activos"
+                    : activeViewTab === "completados"
+                      ? "Historial de Servicios Completados"
+                      : "Todos los Servicios"}
+                </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Solicitudes abiertas que necesitan coordinación y asignación de prestador.
+                  {activeViewTab === "completados"
+                    ? "Registro completo de servicios finalizados, comisiones retenidas (15%) y encuestas de satisfacción."
+                    : "Solicitudes operativas, tarifas y asignación de prestadores en tiempo real."}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -963,9 +1051,68 @@ export default function AdminPage() {
                 <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">
                   {isLoading
                     ? "Cargando..."
-                    : `${filteredAndSortedServices.length} de ${services.length}`}
+                    : `${filteredAndSortedServices.length} resultado${filteredAndSortedServices.length === 1 ? "" : "s"}`}
                 </span>
               </div>
+            </div>
+
+            {/* Selector de pestañas: Servicios Activos / Historial Completados / Todas */}
+            <div
+              role="tablist"
+              aria-label="Vista de servicios"
+              className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-5 py-3 sm:px-6"
+            >
+              {(
+                [
+                  {
+                    id: "activos" as const,
+                    label: "Servicios Activos",
+                    count: tabCounts.activos,
+                  },
+                  {
+                    id: "completados" as const,
+                    label: "Historial Completados",
+                    count: tabCounts.completados,
+                  },
+                  {
+                    id: "todas" as const,
+                    label: "Todas",
+                    count: tabCounts.todas,
+                  },
+                ]
+              ).map((tab) => {
+                const selected = activeViewTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => {
+                      setActiveViewTab(tab.id);
+                      if (tab.id === "completados") {
+                        setStatusFilter("todos");
+                      }
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-cyan-500 ${
+                      selected
+                        ? "bg-slate-950 text-white shadow-sm"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                        selected
+                          ? "bg-cyan-400 text-slate-950"
+                          : "bg-white text-slate-600"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Barra de búsqueda, filtros y ordenamiento */}
@@ -1090,29 +1237,133 @@ export default function AdminPage() {
                     : "Probá cambiando el término de búsqueda o limpiando los filtros."}
                 </p>
               </div>
+            ) : activeViewTab === "completados" ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th scope="col" className="px-5 py-4 font-semibold">ID</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Cliente</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Barrio</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Servicio</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Prestador Asignado</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Monto Total</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Comisión (15%)</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Encuesta y Calificación</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredAndSortedServices.map((service) => {
+                      const fallbackTarifa = obtenerTarifaServicio(service.tipo_servicio);
+                      const montoTotal =
+                        typeof service.monto_total === "number" && service.monto_total > 0
+                          ? service.monto_total
+                          : fallbackTarifa.montoTotal;
+                      const comision =
+                        typeof service.comision_plataforma === "number" &&
+                        service.comision_plataforma >= 0
+                          ? service.comision_plataforma
+                          : fallbackTarifa.comision;
+
+                      return (
+                        <tr key={service.id_servicio} className="transition hover:bg-slate-50">
+                          <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-slate-500">
+                            #{service.id_servicio.slice(0, 8)}
+                          </td>
+                          <td className="max-w-xs px-5 py-4">
+                            <p className="font-semibold text-slate-900">
+                              {service.nombre_contacto?.trim() || "Sin contacto registrado"}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-400">
+                              {formatDate(service.fecha_hora)}
+                            </p>
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
+                            {service.zona}
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 font-semibold capitalize text-slate-800">
+                            {service.tipo_servicio}
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 text-slate-700">
+                            {service.prestador_asignado?.trim() ? (
+                              <span className="inline-flex items-center rounded-lg bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-900 ring-1 ring-inset ring-cyan-200">
+                                {service.prestador_asignado}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400">Sin registrar</span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-900">
+                            {formatearMonedaARS(montoTotal)}
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 font-bold text-emerald-700">
+                            {formatearMonedaARS(comision)}
+                          </td>
+                          <td className="max-w-xs px-5 py-4">
+                            {service.valoracion != null ? (
+                              <div>
+                                <div className="flex items-center gap-1 text-sm text-amber-500">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <span key={star} aria-hidden="true">
+                                      {star <= (service.valoracion ?? 0) ? "★" : "☆"}
+                                    </span>
+                                  ))}
+                                  <span className="ml-1 text-xs font-bold text-slate-700">
+                                    ({service.valoracion}/5)
+                                  </span>
+                                </div>
+                                {service.comentario_encuesta?.trim() && (
+                                  <p className="mt-1 line-clamp-2 text-xs italic text-slate-600">
+                                    “{service.comentario_encuesta}”
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-400">
+                                Sin calificar aún
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
                     <tr>
-                      <th scope="col" className="px-6 py-4 font-semibold">ID</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Cliente / Contacto</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Tipo de Servicio</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Barrio / Sector</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Fecha y Urgencia</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Prestador Asignado</th>
-                      <th scope="col" className="px-6 py-4 font-semibold">Estado</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">ID</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Cliente / Contacto</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Tipo y Tarifa</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Barrio / Sector</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Fecha y Urgencia</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Prestador Asignado</th>
+                      <th scope="col" className="px-5 py-4 font-semibold">Estado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredAndSortedServices.map((service) => {
                       const urgent = isServiceUrgent(service, nowMs);
+                      const fallbackTarifa = obtenerTarifaServicio(service.tipo_servicio);
+                      const montoTotal =
+                        typeof service.monto_total === "number" && service.monto_total > 0
+                          ? service.monto_total
+                          : fallbackTarifa.montoTotal;
+                      const comision =
+                        typeof service.comision_plataforma === "number" &&
+                        service.comision_plataforma >= 0
+                          ? service.comision_plataforma
+                          : fallbackTarifa.comision;
+
                       return (
                         <tr key={service.id_servicio} className="transition hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-slate-500">
+                          <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-slate-500">
                             {service.id_servicio.slice(0, 8)}…
                           </td>
-                          <td className="max-w-xs px-6 py-4">
+                          <td className="max-w-xs px-5 py-4">
                             <p className="font-semibold text-slate-900">
                               {service.nombre_contacto?.trim() || "Sin contacto registrado"}
                             </p>
@@ -1122,11 +1373,19 @@ export default function AdminPage() {
                               </p>
                             )}
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4 font-semibold capitalize text-slate-800">
-                            {service.tipo_servicio}
+                          <td className="whitespace-nowrap px-5 py-4">
+                            <p className="font-semibold capitalize text-slate-800">
+                              {service.tipo_servicio}
+                            </p>
+                            <p className="mt-0.5 text-xs font-semibold text-emerald-700">
+                              {formatearMonedaARS(montoTotal)}{" "}
+                              <span className="font-normal text-slate-400">
+                                (com. {formatearMonedaARS(comision)})
+                              </span>
+                            </p>
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4 text-slate-600">{service.zona}</td>
-                          <td className="whitespace-nowrap px-6 py-4 text-slate-600">
+                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">{service.zona}</td>
+                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                             <div className="flex flex-wrap items-center gap-2">
                               <span>{formatDate(service.fecha_hora)}</span>
                               {urgent && (
@@ -1137,7 +1396,7 @@ export default function AdminPage() {
                               )}
                             </div>
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4">
+                          <td className="whitespace-nowrap px-5 py-4">
                             <select
                               value={service.id_prestador_asignado || ""}
                               onChange={(event) =>
@@ -1172,7 +1431,7 @@ export default function AdminPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4">
+                          <td className="whitespace-nowrap px-5 py-4">
                             <select
                               value={service.estado}
                               onChange={(event) =>

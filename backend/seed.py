@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 try:  # Permite ejecutar `python seed.py` o importar `backend.seed`.
@@ -98,10 +98,55 @@ def upsert(
     return record
 
 
+TARIFAS_BASE = {
+    "traslado": 6500.0,
+    "acompañamiento": 5000.0,
+    "acompanamiento": 5000.0,
+    "mandado": 4000.0,
+    "mandados": 4000.0,
+}
+
+
+def calcular_tarifas(tipo_servicio: str) -> tuple[float, float, float]:
+    monto = TARIFAS_BASE.get(tipo_servicio.strip().lower(), 5000.0)
+    comision = round(monto * 0.15, 2)
+    pago_prestador = round(monto - comision, 2)
+    return monto, comision, pago_prestador
+
+
+def asegurar_columnas_monetizacion() -> None:
+    inspector = inspect(engine)
+    if "servicio" not in inspector.get_table_names():
+        return
+    existentes = {col["name"] for col in inspector.get_columns("servicio")}
+    es_pg = engine.dialect.name == "postgresql"
+    with engine.begin() as conn:
+        for col, tipo_pg, tipo_sq, default_val in [
+            ("monto_total", "DOUBLE PRECISION", "REAL", 5000.0),
+            ("comision_plataforma", "DOUBLE PRECISION", "REAL", 750.0),
+            ("pago_prestador", "DOUBLE PRECISION", "REAL", 4250.0),
+        ]:
+            if es_pg:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE servicio ADD COLUMN IF NOT EXISTS "
+                        f"{col} {tipo_pg} NOT NULL DEFAULT {default_val}"
+                    )
+                )
+            elif col not in existentes:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE servicio ADD COLUMN "
+                        f"{col} {tipo_sq} NOT NULL DEFAULT {default_val}"
+                    )
+                )
+
+
 def seed() -> None:
     """Crea las tablas necesarias y carga el dataset reproducible de San Pedro de Jujuy."""
 
     Base.metadata.create_all(bind=engine)
+    asegurar_columnas_monetizacion()
     now = datetime.now().astimezone().replace(second=0, microsecond=0)
 
     users = {
@@ -290,6 +335,9 @@ def seed() -> None:
             is_completed = spec["estado"] == "completado"
             survey_data = spec["survey"]
 
+            monto_total, comision_plataforma, pago_prestador = calcular_tarifas(
+                spec["tipo_servicio"]
+            )
             service_values = {
                 "id_servicio": service_id,
                 "id_usuario": USUARIO_IDS[spec["user_key"]],
@@ -306,6 +354,9 @@ def seed() -> None:
                     survey_data["valoracion"] if survey_data is not None else None
                 ),
                 "incidencia_fuera_alcance": False,
+                "monto_total": monto_total,
+                "comision_plataforma": comision_plataforma,
+                "pago_prestador": pago_prestador,
             }
             upsert(session, Servicio, service_id, service_values)
 

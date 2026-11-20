@@ -34,12 +34,18 @@ class ServicioCreate(BaseModel):
     cumplio_horario: Optional[bool] = None
     valoracion: Optional[int] = Field(default=None, ge=1, le=5)
     incidencia_fuera_alcance: bool = False
+    monto_total: Optional[float] = Field(default=None, ge=0)
+    comision_plataforma: Optional[float] = Field(default=None, ge=0)
+    pago_prestador: Optional[float] = Field(default=None, ge=0)
 
 
 class ServicioRead(ServicioCreate):
     """Representación de un servicio persistido."""
 
     id_servicio: UUID
+    monto_total: float = 0.0
+    comision_plataforma: float = 0.0
+    pago_prestador: float = 0.0
     nombre_contacto: Optional[str] = None
     preferencias: Optional[str] = None
     id_prestador_asignado: Optional[UUID] = None
@@ -186,6 +192,10 @@ class MetricasRead(BaseModel):
     tasa_cumplimiento: float
     promedio_valoracion: Optional[float] = None
     total_encuestas: int = 0
+    ingresos_brutos: float = 0.0
+    comisiones_plataforma: float = 0.0
+    ingresos_proyectados: float = 0.0
+    comisiones_proyectadas: float = 0.0
 
 
 # Alias con el mismo nombre de las entidades SQLAlchemy del modelo conceptual.

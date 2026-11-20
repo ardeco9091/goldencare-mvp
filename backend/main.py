@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
@@ -79,6 +79,83 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 # El MVP de desarrollo crea las tablas automáticamente al iniciar la aplicación.
 Base.metadata.create_all(bind=engine)
+
+
+TARIFAS_SERVICIO_BASE: dict[str, float] = {
+    "traslado": 6500.0,
+    "acompañamiento": 5000.0,
+    "acompanamiento": 5000.0,
+    "mandado": 4000.0,
+    "mandados": 4000.0,
+}
+COMISION_PLATAFORMA_PCT = 0.15
+
+
+def calcular_tarifa_servicio(
+    tipo_servicio: str,
+    monto_override: float | None = None,
+) -> tuple[float, float, float]:
+    """Devuelve (monto_total, comision_plataforma_15%, pago_prestador_85%)."""
+
+    if monto_override is not None and monto_override >= 0:
+        monto_total = round(float(monto_override), 2)
+    else:
+        clave = (tipo_servicio or "").strip().lower()
+        monto_total = TARIFAS_SERVICIO_BASE.get(clave, 5000.0)
+
+    comision = round(monto_total * COMISION_PLATAFORMA_PCT, 2)
+    pago_prestador = round(monto_total - comision, 2)
+    return monto_total, comision, pago_prestador
+
+
+def asegurar_columnas_monetizacion() -> None:
+    """Agrega columnas de monetización de forma segura en PostgreSQL y SQLite existentes."""
+
+    inspector = inspect(engine)
+    if "servicio" not in inspector.get_table_names():
+        return
+
+    columnas_existentes = {col["name"] for col in inspector.get_columns("servicio")}
+    columnas_requeridas = [
+        ("monto_total", "DOUBLE PRECISION", "REAL", 5000.0),
+        ("comision_plataforma", "DOUBLE PRECISION", "REAL", 750.0),
+        ("pago_prestador", "DOUBLE PRECISION", "REAL", 4250.0),
+    ]
+    es_postgres = engine.dialect.name == "postgresql"
+    se_agregaron_columnas = False
+
+    with engine.begin() as conn:
+        for nombre_col, tipo_pg, tipo_sqlite, valor_default in columnas_requeridas:
+            if es_postgres:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE servicio ADD COLUMN IF NOT EXISTS "
+                        f"{nombre_col} {tipo_pg} NOT NULL DEFAULT {valor_default}"
+                    )
+                )
+                if nombre_col not in columnas_existentes:
+                    se_agregaron_columnas = True
+            elif nombre_col not in columnas_existentes:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE servicio ADD COLUMN "
+                        f"{nombre_col} {tipo_sqlite} NOT NULL DEFAULT {valor_default}"
+                    )
+                )
+                se_agregaron_columnas = True
+
+    if se_agregaron_columnas:
+        with SessionLocal() as db:
+            servicios_existentes = db.scalars(select(Servicio)).all()
+            for srv in servicios_existentes:
+                monto, comision, pago = calcular_tarifa_servicio(srv.tipo_servicio)
+                srv.monto_total = monto
+                srv.comision_plataforma = comision
+                srv.pago_prestador = pago
+            db.commit()
+
+
+asegurar_columnas_monetizacion()
 
 app = FastAPI(title="GoldenCare API", version="0.1.0")
 
@@ -166,11 +243,26 @@ def listar_usuarios(db: Session = Depends(get_db)) -> list[PersonaUsuariaRead]:
 
 @app.post("/servicios", response_model=ServicioRead, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 @app.post("/servicios/", response_model=ServicioRead, status_code=status.HTTP_201_CREATED)
-def crear_servicio(payload: ServicioCreate, db: Session = Depends(get_db)) -> Servicio:
+def crear_servicio(payload: ServicioCreate, db: Session = Depends(get_db)) -> ServicioRead:
     """Registra una nueva solicitud de servicio para GoldenCare."""
 
     datos = payload.model_dump()
     datos["estado"] = payload.estado.value
+    monto_total, comision, pago_prestador = calcular_tarifa_servicio(
+        payload.tipo_servicio,
+        payload.monto_total,
+    )
+    datos["monto_total"] = monto_total
+    datos["comision_plataforma"] = (
+        round(payload.comision_plataforma, 2)
+        if payload.comision_plataforma is not None
+        else comision
+    )
+    datos["pago_prestador"] = (
+        round(payload.pago_prestador, 2)
+        if payload.pago_prestador is not None
+        else pago_prestador
+    )
     servicio = Servicio(**datos)
 
     try:
@@ -184,7 +276,53 @@ def crear_servicio(payload: ServicioCreate, db: Session = Depends(get_db)) -> Se
             detail="No se pudo registrar el servicio.",
         ) from exc
 
-    return servicio
+    consulta_servicio = (
+        select(Servicio)
+        .options(
+            selectinload(Servicio.usuario).selectinload(
+                Persona_Usuaria.contactos_familiares
+            ),
+            selectinload(Servicio.asignaciones).selectinload(Asignacion.prestador),
+            selectinload(Servicio.encuesta),
+        )
+        .where(Servicio.id_servicio == servicio.id_servicio)
+    )
+    servicio_completo = db.scalars(consulta_servicio).first()
+    return _servicio_a_respuesta(servicio_completo or servicio)
+
+
+@app.get("/servicios", response_model=list[ServicioRead], include_in_schema=False)
+@app.get("/servicios/", response_model=list[ServicioRead])
+def listar_servicios(
+    estado: str | None = None,
+    id_prestador: UUID | None = None,
+    db: Session = Depends(get_db),
+) -> list[ServicioRead]:
+    """Devuelve todos los servicios (activos, completados y cancelados), con filtros opcionales."""
+
+    consulta = (
+        select(Servicio)
+        .options(
+            selectinload(Servicio.usuario).selectinload(
+                Persona_Usuaria.contactos_familiares
+            ),
+            selectinload(Servicio.asignaciones).selectinload(Asignacion.prestador),
+            selectinload(Servicio.encuesta),
+        )
+        .order_by(Servicio.fecha_hora.desc())
+    )
+    if estado:
+        consulta = consulta.where(Servicio.estado == estado.strip().lower())
+
+    servicios = list(db.scalars(consulta).all())
+    respuestas = [_servicio_a_respuesta(servicio) for servicio in servicios]
+
+    if id_prestador is not None:
+        respuestas = [
+            item for item in respuestas if item.id_prestador_asignado == id_prestador
+        ]
+
+    return respuestas
 
 
 @app.patch("/servicios/{id_servicio}/estado", response_model=ServicioRead)
@@ -192,10 +330,21 @@ def actualizar_estado_servicio(
     id_servicio: UUID,
     payload: EstadoServicioUpdate,
     db: Session = Depends(get_db),
-) -> Servicio:
+) -> ServicioRead:
     """Actualiza el estado operativo de un servicio existente."""
 
-    servicio = db.get(Servicio, id_servicio)
+    consulta_servicio = (
+        select(Servicio)
+        .options(
+            selectinload(Servicio.usuario).selectinload(
+                Persona_Usuaria.contactos_familiares
+            ),
+            selectinload(Servicio.asignaciones).selectinload(Asignacion.prestador),
+            selectinload(Servicio.encuesta),
+        )
+        .where(Servicio.id_servicio == id_servicio)
+    )
+    servicio = db.scalars(consulta_servicio).first()
     if servicio is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -205,7 +354,8 @@ def actualizar_estado_servicio(
     servicio.estado = payload.estado.value
     try:
         db.commit()
-        db.refresh(servicio)
+        db.expire_all()
+        servicio_actualizado = db.scalars(consulta_servicio).first()
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(
@@ -213,7 +363,7 @@ def actualizar_estado_servicio(
             detail="No se pudo actualizar el estado del servicio.",
         ) from exc
 
-    return servicio
+    return _servicio_a_respuesta(servicio_actualizado or servicio)
 
 
 def _extraer_prestador_asignado(servicio: Servicio) -> tuple[UUID | None, str | None]:
@@ -380,6 +530,66 @@ def asignar_prestador_servicio(
     return _servicio_a_respuesta(servicio_actualizado or servicio)
 
 
+@app.post("/servicios/{id_servicio}/aceptar-prestador", response_model=ServicioRead)
+def aceptar_servicio_prestador(
+    id_servicio: UUID,
+    payload: AsignarPrestadorRequest,
+    db: Session = Depends(get_db),
+) -> ServicioRead:
+    """Permite que un prestador tome directamente un servicio en estado 'solicitado' (flujo tipo Uber)."""
+
+    consulta_servicio = (
+        select(Servicio)
+        .options(
+            selectinload(Servicio.usuario).selectinload(
+                Persona_Usuaria.contactos_familiares
+            ),
+            selectinload(Servicio.asignaciones).selectinload(Asignacion.prestador),
+            selectinload(Servicio.encuesta),
+        )
+        .where(Servicio.id_servicio == id_servicio)
+    )
+    servicio = db.scalars(consulta_servicio).first()
+    if servicio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Servicio no encontrado.",
+        )
+
+    if servicio.estado != EstadoServicio.solicitado.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esta solicitud ya fue aceptada por otro prestador o no se encuentra disponible.",
+        )
+
+    prestador = db.get(Prestador, payload.id_prestador)
+    if prestador is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prestador no encontrado.",
+        )
+
+    try:
+        asignacion = Asignacion(
+            id_servicio=servicio.id_servicio,
+            id_prestador=prestador.id_prestador,
+        )
+        db.add(asignacion)
+        servicio.estado = EstadoServicio.asignado.value
+        db.commit()
+
+        db.expire_all()
+        servicio_actualizado = db.scalars(consulta_servicio).first()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pudo aceptar la solicitud en este momento.",
+        ) from exc
+
+    return _servicio_a_respuesta(servicio_actualizado or servicio)
+
+
 @app.post("/servicios/{id_servicio}/encuesta", response_model=ServicioRead)
 def registrar_encuesta_servicio(
     id_servicio: UUID,
@@ -531,6 +741,27 @@ def obtener_metricas(db: Session = Depends(get_db)) -> MetricasRead:
         round(float(promedio_raw), 1) if promedio_raw is not None else None
     )
 
+    ingresos_brutos_raw = db.scalar(
+        select(func.coalesce(func.sum(Servicio.monto_total), 0.0)).where(
+            Servicio.estado == EstadoServicio.completado.value
+        )
+    )
+    comisiones_plataforma_raw = db.scalar(
+        select(func.coalesce(func.sum(Servicio.comision_plataforma), 0.0)).where(
+            Servicio.estado == EstadoServicio.completado.value
+        )
+    )
+    ingresos_proyectados_raw = db.scalar(
+        select(func.coalesce(func.sum(Servicio.monto_total), 0.0)).where(
+            Servicio.estado.in_(estados_pendientes)
+        )
+    )
+    comisiones_proyectadas_raw = db.scalar(
+        select(func.coalesce(func.sum(Servicio.comision_plataforma), 0.0)).where(
+            Servicio.estado.in_(estados_pendientes)
+        )
+    )
+
     return MetricasRead(
         total_usuarios=total_usuarios,
         servicios_pendientes=servicios_pendientes,
@@ -538,6 +769,10 @@ def obtener_metricas(db: Session = Depends(get_db)) -> MetricasRead:
         tasa_cumplimiento=tasa_cumplimiento,
         promedio_valoracion=promedio_valoracion,
         total_encuestas=total_encuestas,
+        ingresos_brutos=round(float(ingresos_brutos_raw or 0.0), 2),
+        comisiones_plataforma=round(float(comisiones_plataforma_raw or 0.0), 2),
+        ingresos_proyectados=round(float(ingresos_proyectados_raw or 0.0), 2),
+        comisiones_proyectadas=round(float(comisiones_proyectadas_raw or 0.0), 2),
     )
 
 
@@ -613,6 +848,9 @@ def crear_pedido_publico(
                 )
             )
 
+        monto_total, comision_plataforma, pago_prestador = calcular_tarifa_servicio(
+            payload.tipo_servicio
+        )
         servicio = Servicio(
             id_usuario=usuario.id_usuario,
             id_equipo=None,
@@ -625,6 +863,9 @@ def crear_pedido_publico(
             cumplio_horario=None,
             valoracion=None,
             incidencia_fuera_alcance=False,
+            monto_total=monto_total,
+            comision_plataforma=comision_plataforma,
+            pago_prestador=pago_prestador,
         )
         db.add(servicio)
         db.commit()

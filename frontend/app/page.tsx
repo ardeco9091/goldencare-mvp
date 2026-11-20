@@ -1,11 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   BARRIOS_SAN_PEDRO,
+  TARIFAS_SERVICIO,
   combinarDireccionYPreferencias,
+  formatearMonedaARS,
   getApiBaseUrl,
+  obtenerTarifaServicio,
+  parsearPrestador,
   type BarrioSanPedro,
 } from "./constants/barrios";
 
@@ -28,6 +31,7 @@ type PedidoRespuesta = {
   estado: EstadoServicio;
   preferencias?: string | null;
   prestador_asignado?: string | null;
+  monto_total?: number;
   valoracion?: number | null;
   comentario_encuesta?: string | null;
 };
@@ -81,7 +85,7 @@ const ESTADOS_INFO: Record<
   solicitado: {
     etiqueta: "Solicitado",
     explicacion:
-      "Recibimos tu pedido. Un coordinador está revisando la solicitud para asignarte al prestador ideal.",
+      "Buscando prestador disponible en San Pedro... Te avisaremos en vivo apenas uno acepte tu solicitud.",
     badgeClass: "bg-amber-50 text-amber-800 ring-amber-600/25",
     barClass: "bg-amber-500",
     progreso: 25,
@@ -481,6 +485,101 @@ export default function ClientPortalPage() {
     ? (ESTADOS_INFO[confirmedOrder.estado] ?? ESTADOS_INFO.solicitado)
     : ESTADOS_INFO.solicitado;
 
+  const tarifaSeleccionada = obtenerTarifaServicio(tipoServicio);
+
+  function renderLiveProviderStatus(pedido: PedidoRespuesta) {
+    const monto =
+      typeof pedido.monto_total === "number" && pedido.monto_total > 0
+        ? pedido.monto_total
+        : obtenerTarifaServicio(pedido.tipo_servicio).montoTotal;
+
+    if (pedido.estado === "solicitado") {
+      return (
+        <div className="mt-4 flex items-center gap-3.5 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3.5">
+          <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-lg">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-30" />
+            <span className="relative" aria-hidden="true">
+              📡
+            </span>
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-amber-950">
+              Buscando prestador disponible en San Pedro...
+            </p>
+            <p className="mt-0.5 text-xs text-amber-800">
+              Tu pedido ya está visible para los prestadores activos. Tarifa
+              estimada: <strong>{formatearMonedaARS(monto)}</strong>.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (pedido.estado === "asignado" || pedido.estado === "en curso") {
+      const infoPrestador = parsearPrestador(pedido.prestador_asignado);
+      const estaEnCurso = pedido.estado === "en curso";
+
+      return (
+        <div className="mt-4 overflow-hidden rounded-2xl border-2 border-cyan-500/40 bg-slate-950 p-4 text-white shadow-md">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+            <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-cyan-300">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
+              {estaEnCurso
+                ? "Asistencia en curso en vivo"
+                : "Prestador confirmado en San Pedro"}
+            </span>
+            <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-bold text-cyan-200">
+              Tarifa: {formatearMonedaARS(monto)}
+            </span>
+          </div>
+
+          <div className="mt-3.5 flex items-center gap-3.5">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-cyan-400 text-base font-extrabold text-slate-950 shadow-sm">
+              {infoPrestador.iniciales}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-bold text-white">
+                {infoPrestador.nombre}
+              </p>
+              <p className="truncate text-xs font-medium text-cyan-200">
+                {infoPrestador.especialidad} · Prestador verificado GoldenCare
+              </p>
+            </div>
+            <span
+              className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-bold ${
+                estaEnCurso
+                  ? "bg-violet-500/20 text-violet-200 ring-1 ring-violet-400/40"
+                  : "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40"
+              }`}
+            >
+              {estaEnCurso ? "En servicio" : "Asignado"}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    if (pedido.prestador_asignado) {
+      const infoPrestador = parsearPrestador(pedido.prestador_asignado);
+      return (
+        <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-950">
+          <span className="flex items-center gap-2">
+            <span aria-hidden="true">👤</span>
+            <span>
+              Prestador: <strong>{infoPrestador.nombre}</strong> (
+              {infoPrestador.especialidad})
+            </span>
+          </span>
+          <span className="font-bold text-cyan-900">
+            {formatearMonedaARS(monto)}
+          </span>
+        </div>
+      );
+    }
+
+    return null;
+  }
+
   function renderSurveySection(pedido: PedidoRespuesta) {
     if (pedido.estado !== "completado") {
       return null;
@@ -613,17 +712,10 @@ export default function ClientPortalPage() {
                 GoldenCare
               </span>
               <span className="block truncate text-xs text-cyan-300">
-                Portal de Asistencia
+                Portal de Asistencia · San Pedro de Jujuy
               </span>
             </div>
           </div>
-
-          <Link
-            href="/admin"
-            className="inline-flex min-h-[40px] shrink-0 items-center rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-400/50 hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-400 sm:px-3.5"
-          >
-            Acceso Coordinadores
-          </Link>
         </div>
 
         <div className="mx-auto max-w-4xl px-4 pb-8 pt-4 sm:px-6 sm:pb-10 sm:pt-6">
@@ -805,15 +897,7 @@ export default function ClientPortalPage() {
                     </strong>{" "}
                     {confirmedStatusInfo.explicacion}
                   </p>
-                  {confirmedOrder.prestador_asignado && (
-                    <div className="mt-3 flex items-center gap-2.5 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-950">
-                      <span aria-hidden="true">👤</span>
-                      <span>
-                        Profesional asignado:{" "}
-                        <strong>{confirmedOrder.prestador_asignado}</strong>
-                      </span>
-                    </div>
-                  )}
+                  {renderLiveProviderStatus(confirmedOrder)}
                 </div>
               </div>
 
@@ -907,6 +991,10 @@ export default function ClientPortalPage() {
                         </span>
                         <span className="mt-1.5 text-sm leading-relaxed text-slate-600">
                           {item.descripcion}
+                        </span>
+                        <span className="mt-3 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-extrabold text-cyan-800">
+                          Tarifa estimada:{" "}
+                          {formatearMonedaARS(TARIFAS_SERVICIO[item.id])}
                         </span>
                       </button>
                     );
@@ -1064,6 +1152,30 @@ export default function ClientPortalPage() {
                       placeholder="Indicá la dirección exacta, si requiere ayuda con bastón/silla de ruedas, o detalles del turno médico..."
                       className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20"
                     />
+                  </div>
+                </div>
+
+                {/* Tarifa Estimada del Servicio antes de confirmar */}
+                <div className="mt-6 flex flex-col justify-between gap-3 rounded-2xl border-2 border-cyan-200 bg-cyan-50/70 p-4 sm:flex-row sm:items-center sm:p-5">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-cyan-800">
+                      Tarifa Estimada del Servicio
+                    </p>
+                    <p className="mt-0.5 text-sm font-semibold capitalize text-slate-800">
+                      Servicio de {tipoServicio} · {zona}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      Precio transparente fijo en San Pedro de Jujuy. Incluye
+                      coordinación y seguimiento en vivo.
+                    </p>
+                  </div>
+                  <div className="shrink-0 sm:text-right">
+                    <p className="text-2xl font-extrabold text-slate-950 sm:text-3xl">
+                      {formatearMonedaARS(tarifaSeleccionada.montoTotal)}
+                    </p>
+                    <p className="text-xs font-semibold text-cyan-700">
+                      ARS estimado
+                    </p>
                   </div>
                 </div>
 
@@ -1262,15 +1374,7 @@ export default function ClientPortalPage() {
                             </strong>{" "}
                             {infoEstado.explicacion}
                           </p>
-                          {pedido.prestador_asignado && (
-                            <div className="mt-3.5 flex items-center gap-2.5 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-950">
-                              <span aria-hidden="true">👤</span>
-                              <span>
-                                Profesional asignado:{" "}
-                                <strong>{pedido.prestador_asignado}</strong>
-                              </span>
-                            </div>
-                          )}
+                          {renderLiveProviderStatus(pedido)}
                           {renderSurveySection(pedido)}
                         </div>
                       </article>
@@ -1283,16 +1387,11 @@ export default function ClientPortalPage() {
         )}
       </main>
 
-      {/* Footer con enlace discreto a /admin */}
+      {/* Footer limpio sin enlaces administrativos */}
       <footer className="border-t border-slate-200 bg-white py-6 text-slate-500">
-        <div className="mx-auto flex max-w-4xl flex-col items-center justify-between gap-3 px-4 text-xs sm:flex-row sm:px-6">
+        <div className="mx-auto flex max-w-4xl flex-col items-center justify-between gap-2 px-4 text-xs sm:flex-row sm:px-6">
           <p>© 2026 GoldenCare · Servicios de asistencia no médica</p>
-          <Link
-            href="/admin"
-            className="font-medium text-slate-500 underline-offset-4 transition hover:text-cyan-700 hover:underline"
-          >
-            Acceso Coordinadores (/admin)
-          </Link>
+          <p className="text-slate-400">San Pedro de Jujuy, Argentina</p>
         </div>
       </footer>
     </div>

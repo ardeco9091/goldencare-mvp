@@ -44,3 +44,62 @@ export function getApiBaseUrl(): string {
   return "/api";
 }
 
+export const TARIFAS_SERVICIO = {
+  traslado: 6500,
+  acompañamiento: 5000,
+  mandado: 4000,
+} as const;
+
+export const COMISION_PLATAFORMA_PCT = 0.15;
+
+export function obtenerTarifaServicio(tipo: string): {
+  montoTotal: number;
+  comision: number;
+  pagoPrestador: number;
+} {
+  const clave = tipo.trim().toLowerCase();
+  let montoTotal = 5000;
+  if (clave === "traslado") {
+    montoTotal = TARIFAS_SERVICIO.traslado;
+  } else if (clave === "acompañamiento" || clave === "acompanamiento") {
+    montoTotal = TARIFAS_SERVICIO.acompañamiento;
+  } else if (clave === "mandado" || clave === "mandados") {
+    montoTotal = TARIFAS_SERVICIO.mandado;
+  }
+  const comision = Math.round(montoTotal * COMISION_PLATAFORMA_PCT);
+  const pagoPrestador = montoTotal - comision;
+  return { montoTotal, comision, pagoPrestador };
+}
+
+export function formatearMonedaARS(monto: number): string {
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  }).format(Number.isFinite(monto) ? monto : 0);
+}
+
+export function parsearPrestador(rolCompleto?: string | null): {
+  nombre: string;
+  especialidad: string;
+  iniciales: string;
+} {
+  const limpio = (rolCompleto ?? "").trim();
+  if (!limpio) {
+    return {
+      nombre: "Prestador GoldenCare",
+      especialidad: "Asistencia domiciliaria",
+      iniciales: "GC",
+    };
+  }
+  const partes = limpio.split(/\s*[-–—·]\s*/);
+  const nombre = partes[0]?.trim() || limpio;
+  const especialidad = partes.slice(1).join(" · ").trim() || "Asistencia GoldenCare";
+  const palabras = nombre.split(/\s+/).filter(Boolean);
+  const iniciales =
+    palabras.length >= 2
+      ? `${palabras[0][0]}${palabras[1][0]}`.toUpperCase()
+      : nombre.slice(0, 2).toUpperCase();
+  return { nombre, especialidad, iniciales };
+}
+

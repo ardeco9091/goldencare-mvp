@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -88,6 +88,9 @@ class Servicio(Base):
     cumplio_horario: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     valoracion: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     incidencia_fuera_alcance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    monto_total: Mapped[float] = mapped_column(Float, nullable=False, default=5000.0)
+    comision_plataforma: Mapped[float] = mapped_column(Float, nullable=False, default=750.0)
+    pago_prestador: Mapped[float] = mapped_column(Float, nullable=False, default=4250.0)
 
     usuario: Mapped[Persona_Usuaria] = relationship(back_populates="servicios")
     equipamiento: Mapped[Optional[Equipamiento]] = relationship(back_populates="servicios")
