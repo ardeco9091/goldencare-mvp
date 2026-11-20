@@ -161,15 +161,45 @@ function getCurrentTimeLabel() {
 function statusClass(status: EstadoServicio) {
   switch (status) {
     case "solicitado":
-      return "bg-amber-50 text-amber-700 ring-amber-600/20";
+      return "bg-amber-50 text-amber-800 ring-amber-600/25";
     case "asignado":
-      return "bg-blue-50 text-blue-700 ring-blue-600/20";
+      return "bg-blue-50 text-blue-800 ring-blue-600/25";
     case "en curso":
-      return "bg-violet-50 text-violet-700 ring-violet-600/20";
+      return "bg-indigo-50 text-indigo-800 ring-indigo-600/25";
     case "completado":
-      return "bg-emerald-50 text-emerald-700 ring-emerald-600/20";
+      return "bg-emerald-50 text-emerald-800 ring-emerald-600/25";
     case "cancelado":
-      return "bg-rose-50 text-rose-700 ring-rose-600/20";
+      return "bg-rose-50 text-rose-800 ring-rose-600/25";
+  }
+}
+
+function statusBorderClass(status: EstadoServicio) {
+  switch (status) {
+    case "solicitado":
+      return "border-l-4 border-l-amber-500";
+    case "asignado":
+      return "border-l-4 border-l-blue-500";
+    case "en curso":
+      return "border-l-4 border-l-indigo-500";
+    case "completado":
+      return "border-l-4 border-l-emerald-500";
+    case "cancelado":
+      return "border-l-4 border-l-rose-500";
+  }
+}
+
+function statusLabel(status: EstadoServicio) {
+  switch (status) {
+    case "solicitado":
+      return "Solicitado";
+    case "asignado":
+      return "Asignado";
+    case "en curso":
+      return "En curso";
+    case "completado":
+      return "Completado";
+    case "cancelado":
+      return "Cancelado";
   }
 }
 
@@ -1237,167 +1267,133 @@ export default function AdminPage() {
                     : "Probá cambiando el término de búsqueda o limpiando los filtros."}
                 </p>
               </div>
-            ) : activeViewTab === "completados" ? (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                    <tr>
-                      <th scope="col" className="px-5 py-4 font-semibold">ID</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Cliente</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Barrio</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Servicio</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Prestador Asignado</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Monto Total</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Comisión (15%)</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Encuesta y Calificación</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredAndSortedServices.map((service) => {
-                      const fallbackTarifa = obtenerTarifaServicio(service.tipo_servicio);
-                      const montoTotal =
-                        typeof service.monto_total === "number" && service.monto_total > 0
-                          ? service.monto_total
-                          : fallbackTarifa.montoTotal;
-                      const comision =
-                        typeof service.comision_plataforma === "number" &&
-                        service.comision_plataforma >= 0
-                          ? service.comision_plataforma
-                          : fallbackTarifa.comision;
-
-                      return (
-                        <tr key={service.id_servicio} className="transition hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-slate-500">
-                            #{service.id_servicio.slice(0, 8)}
-                          </td>
-                          <td className="max-w-xs px-5 py-4">
-                            <p className="font-semibold text-slate-900">
-                              {service.nombre_contacto?.trim() || "Sin contacto registrado"}
-                            </p>
-                            <p className="mt-0.5 text-xs text-slate-400">
-                              {formatDate(service.fecha_hora)}
-                            </p>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                            {service.zona}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 font-semibold capitalize text-slate-800">
-                            {service.tipo_servicio}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-700">
-                            {service.prestador_asignado?.trim() ? (
-                              <span className="inline-flex items-center rounded-lg bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-900 ring-1 ring-inset ring-cyan-200">
-                                {service.prestador_asignado}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-slate-400">Sin registrar</span>
-                            )}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-900">
-                            {formatearMonedaARS(montoTotal)}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 font-bold text-emerald-700">
-                            {formatearMonedaARS(comision)}
-                          </td>
-                          <td className="max-w-xs px-5 py-4">
-                            {service.valoracion != null ? (
-                              <div>
-                                <div className="flex items-center gap-1 text-sm text-amber-500">
-                                  {[1, 2, 3, 4, 5].map((star) => (
-                                    <span key={star} aria-hidden="true">
-                                      {star <= (service.valoracion ?? 0) ? "★" : "☆"}
-                                    </span>
-                                  ))}
-                                  <span className="ml-1 text-xs font-bold text-slate-700">
-                                    ({service.valoracion}/5)
-                                  </span>
-                                </div>
-                                {service.comentario_encuesta?.trim() && (
-                                  <p className="mt-1 line-clamp-2 text-xs italic text-slate-600">
-                                    “{service.comentario_encuesta}”
-                                  </p>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-slate-400">
-                                Sin calificar aún
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                    <tr>
-                      <th scope="col" className="px-5 py-4 font-semibold">ID</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Cliente / Contacto</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Tipo y Tarifa</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Barrio / Sector</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Fecha y Urgencia</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Prestador Asignado</th>
-                      <th scope="col" className="px-5 py-4 font-semibold">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredAndSortedServices.map((service) => {
-                      const urgent = isServiceUrgent(service, nowMs);
-                      const fallbackTarifa = obtenerTarifaServicio(service.tipo_servicio);
-                      const montoTotal =
-                        typeof service.monto_total === "number" && service.monto_total > 0
-                          ? service.monto_total
-                          : fallbackTarifa.montoTotal;
-                      const comision =
-                        typeof service.comision_plataforma === "number" &&
-                        service.comision_plataforma >= 0
-                          ? service.comision_plataforma
-                          : fallbackTarifa.comision;
+              <div className="space-y-4 bg-slate-50/50 p-4 sm:p-6">
+                {filteredAndSortedServices.map((service) => {
+                  const urgent = isServiceUrgent(service, nowMs);
+                  const fallbackTarifa = obtenerTarifaServicio(service.tipo_servicio);
+                  const montoTotal =
+                    typeof service.monto_total === "number" && service.monto_total > 0
+                      ? service.monto_total
+                      : fallbackTarifa.montoTotal;
+                  const comision =
+                    typeof service.comision_plataforma === "number" &&
+                    service.comision_plataforma >= 0
+                      ? service.comision_plataforma
+                      : fallbackTarifa.comision;
+                  const pagoPrestador =
+                    typeof service.pago_prestador === "number" &&
+                    service.pago_prestador > 0
+                      ? service.pago_prestador
+                      : Math.max(0, montoTotal - comision);
+                  const isBusyStatus = updatingServiceId === service.id_servicio;
+                  const isBusyAssign = assigningServiceId === service.id_servicio;
+                  const mostrarPieEncuesta =
+                    activeViewTab === "completados" ||
+                    service.estado === "completado" ||
+                    service.valoracion != null ||
+                    Boolean(service.comentario_encuesta?.trim());
 
-                      return (
-                        <tr key={service.id_servicio} className="transition hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-slate-500">
-                            {service.id_servicio.slice(0, 8)}…
-                          </td>
-                          <td className="max-w-xs px-5 py-4">
-                            <p className="font-semibold text-slate-900">
-                              {service.nombre_contacto?.trim() || "Sin contacto registrado"}
+                  return (
+                    <article
+                      key={service.id_servicio}
+                      className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-sky-300 ${statusBorderClass(service.estado)}`}
+                    >
+                      {/* Cabecera de tarjeta */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center rounded-lg bg-slate-100 px-2.5 py-1 font-mono text-xs font-bold text-slate-700">
+                            #{service.id_servicio.slice(0, 8)}
+                          </span>
+                          <span
+                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ring-1 ring-inset ${statusClass(service.estado)}`}
+                          >
+                            {statusLabel(service.estado)}
+                          </span>
+                          {urgent && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-rose-800 ring-1 ring-inset ring-rose-600/25">
+                              <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
+                              Urgente
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 sm:text-sm">
+                          <span aria-hidden="true">🕒</span>
+                          <span>{formatDate(service.fecha_hora)}</span>
+                        </div>
+                      </div>
+
+                      {/* Cuerpo en 3 columnas responsivas */}
+                      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                        {/* Columna 1: Cliente y Ubicación */}
+                        <div className="space-y-1.5">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                            Cliente y Ubicación
+                          </p>
+                          <p className="text-sm font-bold text-slate-950">
+                            {service.nombre_contacto?.trim() ||
+                              "Sin contacto registrado"}
+                          </p>
+                          <p className="text-sm font-bold text-slate-800">
+                            📍 {service.zona}
+                          </p>
+                          {service.preferencias?.trim() ? (
+                            <p className="break-words text-xs leading-relaxed text-slate-600">
+                              {service.preferencias}
                             </p>
-                            {service.preferencias?.trim() && (
-                              <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
-                                {service.preferencias}
-                              </p>
-                            )}
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <p className="font-semibold capitalize text-slate-800">
-                              {service.tipo_servicio}
+                          ) : (
+                            <p className="text-xs text-slate-400">
+                              Sin dirección ni notas adicionales.
                             </p>
-                            <p className="mt-0.5 text-xs font-semibold text-emerald-700">
-                              {formatearMonedaARS(montoTotal)}{" "}
-                              <span className="font-normal text-slate-400">
-                                (com. {formatearMonedaARS(comision)})
+                          )}
+                        </div>
+
+                        {/* Columna 2: Servicio y Tarifas */}
+                        <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50/80 p-3.5">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                            Servicio y Tarifas
+                          </p>
+                          <p className="text-base font-bold capitalize text-slate-900">
+                            {service.tipo_servicio}
+                          </p>
+                          <div className="space-y-1 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-slate-500">Monto total:</span>
+                              <span className="text-sm font-extrabold text-slate-950">
+                                {formatearMonedaARS(montoTotal)}
                               </span>
-                            </p>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">{service.zona}</td>
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span>{formatDate(service.fecha_hora)}</span>
-                              {urgent && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-rose-800 ring-1 ring-inset ring-rose-600/25">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
-                                  Urgente
-                                </span>
-                              )}
                             </div>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-slate-500">
+                                Comisión GoldenCare (15%):
+                              </span>
+                              <span className="font-bold text-cyan-800">
+                                com. {formatearMonedaARS(comision)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 border-t border-slate-200/80 pt-1">
+                              <span className="text-slate-500">
+                                Neto prestador (85%):
+                              </span>
+                              <span className="font-bold text-emerald-700">
+                                {formatearMonedaARS(pagoPrestador)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Columna 3: Prestador y Controles */}
+                        <div className="flex flex-col justify-between space-y-3">
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor={`prestador-${service.id_servicio}`}
+                              className="block text-[11px] font-bold uppercase tracking-wider text-slate-400"
+                            >
+                              Prestador Asignado
+                            </label>
                             <select
+                              id={`prestador-${service.id_servicio}`}
                               value={service.id_prestador_asignado || ""}
                               onChange={(event) =>
                                 void handleAssignProvider(
@@ -1405,15 +1401,12 @@ export default function AdminPage() {
                                   event.target.value,
                                 )
                               }
-                              disabled={
-                                assigningServiceId === service.id_servicio ||
-                                providers.length === 0
-                              }
+                              disabled={isBusyAssign || providers.length === 0}
                               aria-label={`Asignar prestador al servicio ${service.id_servicio}`}
-                              className={`max-w-[220px] cursor-pointer rounded-xl border px-3 py-1.5 text-xs font-medium outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-60 ${
+                              className={`w-full cursor-pointer rounded-xl border px-3 py-2 text-xs font-semibold outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-60 ${
                                 service.id_prestador_asignado
-                                  ? "border-cyan-200 bg-cyan-50/70 text-cyan-900"
-                                  : "border-slate-200 bg-white text-slate-600"
+                                  ? "border-cyan-200 bg-cyan-50/70 text-cyan-950"
+                                  : "border-slate-300 bg-white text-slate-700"
                               }`}
                             >
                               <option value="">
@@ -1430,32 +1423,142 @@ export default function AdminPage() {
                                 </option>
                               ))}
                             </select>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4">
-                            <select
-                              value={service.estado}
-                              onChange={(event) =>
-                                void handleStatusChange(
-                                  service.id_servicio,
-                                  event.target.value as EstadoServicio,
-                                )
-                              }
-                              disabled={updatingServiceId === service.id_servicio}
-                              aria-label={`Actualizar estado del servicio ${service.id_servicio}`}
-                              className={`cursor-pointer rounded-full border-0 px-3 py-1 text-xs font-semibold ring-1 ring-inset outline-none transition focus:ring-2 focus:ring-cyan-500 disabled:cursor-wait disabled:opacity-60 ${statusClass(service.estado)}`}
+                          </div>
+
+                          <div className="space-y-2">
+                            <label
+                              htmlFor={`estado-${service.id_servicio}`}
+                              className="block text-[11px] font-bold uppercase tracking-wider text-slate-400"
                             >
-                              {serviceStatuses.map((status) => (
-                                <option key={status} value={status}>
-                                  {status}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                              Estado Operativo
+                            </label>
+
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {service.estado === "solicitado" && (
+                                <button
+                                  type="button"
+                                  disabled={isBusyStatus}
+                                  onClick={() =>
+                                    void handleStatusChange(
+                                      service.id_servicio,
+                                      "asignado",
+                                    )
+                                  }
+                                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                                >
+                                  Asignar
+                                </button>
+                              )}
+                              {service.estado === "asignado" && (
+                                <button
+                                  type="button"
+                                  disabled={isBusyStatus}
+                                  onClick={() =>
+                                    void handleStatusChange(
+                                      service.id_servicio,
+                                      "en curso",
+                                    )
+                                  }
+                                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                                >
+                                  Iniciar
+                                </button>
+                              )}
+                              {service.estado === "en curso" && (
+                                <button
+                                  type="button"
+                                  disabled={isBusyStatus}
+                                  onClick={() =>
+                                    void handleStatusChange(
+                                      service.id_servicio,
+                                      "completado",
+                                    )
+                                  }
+                                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                  Completar
+                                </button>
+                              )}
+                              {service.estado !== "completado" &&
+                                service.estado !== "cancelado" && (
+                                  <button
+                                    type="button"
+                                    disabled={isBusyStatus}
+                                    onClick={() =>
+                                      void handleStatusChange(
+                                        service.id_servicio,
+                                        "cancelado",
+                                      )
+                                    }
+                                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                                  >
+                                    Cancelar
+                                  </button>
+                                )}
+
+                              <select
+                                id={`estado-${service.id_servicio}`}
+                                value={service.estado}
+                                onChange={(event) =>
+                                  void handleStatusChange(
+                                    service.id_servicio,
+                                    event.target.value as EstadoServicio,
+                                  )
+                                }
+                                disabled={isBusyStatus}
+                                aria-label={`Cambiar estado del servicio ${service.id_servicio}`}
+                                className={`min-w-[125px] flex-1 cursor-pointer rounded-lg border-0 px-3 py-1.5 text-xs font-bold ring-1 ring-inset outline-none transition focus:ring-2 focus:ring-cyan-500 disabled:cursor-wait disabled:opacity-60 ${statusClass(service.estado)}`}
+                              >
+                                {serviceStatuses.map((status) => (
+                                  <option key={status} value={status}>
+                                    {statusLabel(status)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Pie de tarjeta: Encuesta y valoración */}
+                      {mostrarPieEncuesta && (
+                        <div className="mt-4 flex flex-col justify-between gap-2 rounded-xl border border-slate-200/80 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center">
+                          {service.valoracion != null ? (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                                  Calificación del cliente:
+                                </span>
+                                <div className="flex items-center gap-0.5 text-base text-amber-500">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <span key={star} aria-hidden="true">
+                                      {star <= (service.valoracion ?? 0)
+                                        ? "★"
+                                        : "☆"}
+                                    </span>
+                                  ))}
+                                  <span className="ml-1.5 text-xs font-bold text-slate-800">
+                                    ({service.valoracion}/5)
+                                  </span>
+                                </div>
+                              </div>
+                              {service.comentario_encuesta?.trim() && (
+                                <p className="text-xs italic text-slate-700 sm:text-right">
+                                  “{service.comentario_encuesta}”
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-xs font-medium text-slate-500">
+                              ★ Encuesta de satisfacción pendiente — el cliente aún
+                              no calificó este servicio.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
