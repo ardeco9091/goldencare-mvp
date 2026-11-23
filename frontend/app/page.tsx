@@ -152,7 +152,9 @@ export default function ClientPortalPage() {
   const [zona, setZona] = useState<Zona>(BARRIOS_SAN_PEDRO[0]);
   const [direccionReferencia, setDireccionReferencia] = useState<string>("");
   const [fechaHora, setFechaHora] = useState<string>("");
-  const [nombreContacto, setNombreContacto] = useState<string>("");
+  const [nombre, setNombre] = useState<string>("");
+  const [apellido, setApellido] = useState<string>("");
+  const [telefono, setTelefono] = useState<string>("");
   const [preferencias, setPreferencias] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -353,9 +355,14 @@ export default function ClientPortalPage() {
       return;
     }
 
-    if (!nombreContacto.trim()) {
+    if (!nombre.trim() || !apellido.trim()) {
+      setSubmitError("Por favor, ingresá tu nombre y apellido.");
+      return;
+    }
+
+    if (telefono.length !== 10) {
       setSubmitError(
-        "Por favor, ingresá tu nombre y teléfono de contacto.",
+        "El teléfono debe tener exactamente 10 dígitos numéricos (sin 0 ni 15, ej: 3888458611).",
       );
       return;
     }
@@ -366,12 +373,14 @@ export default function ClientPortalPage() {
         direccionReferencia,
         preferencias,
       );
+      const nombreCompleto = `${nombre.trim()} ${apellido.trim()}`;
 
       const response = await fetch(`${getApiBaseUrl()}/pedidos/publico`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nombre_contacto: nombreContacto.trim(),
+          nombre_contacto: nombreCompleto,
+          telefono,
           zona,
           tipo_servicio: tipoServicio,
           fecha_hora: new Date(fechaHora).toISOString(),
@@ -384,7 +393,10 @@ export default function ClientPortalPage() {
         const detail =
           responseBody && typeof responseBody.detail === "string"
             ? responseBody.detail
-            : "No pudimos registrar tu solicitud en este momento. Verificá los datos e intentá nuevamente.";
+            : Array.isArray(responseBody?.detail) &&
+                typeof responseBody.detail[0]?.msg === "string"
+              ? responseBody.detail[0].msg.replace(/^Value error,\s*/i, "")
+              : "No pudimos registrar tu solicitud en este momento. Verificá los datos e intentá nuevamente.";
         throw new Error(detail);
       }
 
@@ -416,6 +428,9 @@ export default function ClientPortalPage() {
     setZona(BARRIOS_SAN_PEDRO[0]);
     setDireccionReferencia("");
     setFechaHora("");
+    setNombre("");
+    setApellido("");
+    setTelefono("");
     setPreferencias("");
     setCopiedCode(false);
   }
@@ -1111,26 +1126,88 @@ export default function ClientPortalPage() {
                 </p>
 
                 <div className="mt-5 space-y-5">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label
+                        htmlFor="nombre-input"
+                        className="mb-2 block text-base font-bold text-slate-800"
+                      >
+                        Nombre <span className="text-rose-600">*</span>
+                      </label>
+                      <input
+                        id="nombre-input"
+                        name="nombre"
+                        type="text"
+                        autoComplete="given-name"
+                        value={nombre}
+                        onChange={(event) => setNombre(event.target.value)}
+                        placeholder="Ej. María"
+                        required
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="apellido-input"
+                        className="mb-2 block text-base font-bold text-slate-800"
+                      >
+                        Apellido <span className="text-rose-600">*</span>
+                      </label>
+                      <input
+                        id="apellido-input"
+                        name="apellido"
+                        type="text"
+                        autoComplete="family-name"
+                        value={apellido}
+                        onChange={(event) => setApellido(event.target.value)}
+                        placeholder="Ej. Gómez"
+                        required
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20"
+                      />
+                    </div>
+                  </div>
+
                   <div>
-                    <label
-                      htmlFor="nombre-contacto-input"
-                      className="mb-2 block text-base font-bold text-slate-800"
-                    >
-                      Nombre y teléfono de contacto{" "}
-                      <span className="text-rose-600">*</span>
-                    </label>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="telefono-input"
+                        className="block text-base font-bold text-slate-800"
+                      >
+                        Teléfono / WhatsApp{" "}
+                        <span className="text-rose-600">*</span>
+                      </label>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                          telefono.length === 10
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {telefono.length}/10 dígitos
+                      </span>
+                    </div>
                     <input
-                      id="nombre-contacto-input"
-                      name="nombre_contacto"
-                      type="text"
-                      value={nombreContacto}
+                      id="telefono-input"
+                      name="telefono"
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      autoComplete="tel-national"
+                      value={telefono}
                       onChange={(event) =>
-                        setNombreContacto(event.target.value)
+                        setTelefono(
+                          event.target.value.replace(/\D/g, "").slice(0, 10),
+                        )
                       }
-                      placeholder="Ej. María Gómez - 388 412 3456"
+                      placeholder="Ej: 3888458611 (10 dígitos sin 0 ni 15)"
                       required
                       className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20"
                     />
+                    <p className="mt-1.5 text-xs text-slate-500">
+                      Ingresá código de área + número sin 0 ni 15 (10 dígitos
+                      numéricos).
+                    </p>
                   </div>
 
                   <div>

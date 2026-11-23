@@ -4,10 +4,38 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+import re
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _normalizar_y_validar_telefono_ar(valor: str) -> str:
+    """Normaliza dígitos y exige exactamente 10 dígitos numéricos (Argentina, sin 0 ni 15)."""
+
+    digitos = re.sub(r"\D", "", valor or "")
+    if not re.fullmatch(r"\d{10}", digitos):
+        raise ValueError(
+            "El teléfono debe tener exactamente 10 dígitos numéricos (sin 0 ni 15, ej: 3888458611)."
+        )
+    return digitos
+
+
+def _normalizar_y_validar_dni_ar(valor: str) -> str:
+    """Normaliza dígitos y exige DNI argentino de 7 u 8 dígitos (1.000.000 a 99.999.999)."""
+
+    digitos = re.sub(r"\D", "", valor or "")
+    if not re.fullmatch(r"\d{7,8}", digitos):
+        raise ValueError(
+            "El DNI debe contener 7 u 8 dígitos numéricos válidos de Argentina (sin puntos)."
+        )
+    numero = int(digitos)
+    if numero < 1_000_000 or numero > 99_999_999:
+        raise ValueError(
+            "El DNI debe estar dentro del rango válido argentino (entre 1.000.000 y 99.999.999)."
+        )
+    return digitos
 
 
 class EstadoServicio(str, Enum):
@@ -118,26 +146,50 @@ class PrestadorCreate(BaseModel):
             raise ValueError("Ingresá un correo electrónico válido.")
         return limpio
 
+    @field_validator("telefono")
+    @classmethod
+    def validar_telefono_opcional(cls, valor: Optional[str]) -> Optional[str]:
+        if valor is None or not valor.strip():
+            return None
+        return _normalizar_y_validar_telefono_ar(valor)
+
+    @field_validator("dni")
+    @classmethod
+    def validar_dni_opcional(cls, valor: Optional[str]) -> Optional[str]:
+        if valor is None or not valor.strip():
+            return None
+        return _normalizar_y_validar_dni_ar(valor)
+
 
 class PrestadorRegistroRequest(BaseModel):
     """Datos enviados en el autoregistro público de un postulante a prestador."""
 
     nombre: str = Field(min_length=2, max_length=60)
-    dni: str = Field(min_length=6, max_length=30)
-    telefono: str = Field(min_length=6, max_length=50)
+    dni: str = Field(min_length=7, max_length=30)
+    telefono: str = Field(min_length=10, max_length=50)
     email: str = Field(min_length=3, max_length=120)
     password: str = Field(min_length=4, max_length=128)
     especialidad: str = Field(min_length=2, max_length=40)
     barrio_cobertura: str = Field(min_length=2, max_length=120)
     experiencia: Optional[str] = None
 
-    @field_validator("nombre", "dni", "telefono", "especialidad", "barrio_cobertura")
+    @field_validator("nombre", "especialidad", "barrio_cobertura")
     @classmethod
     def validar_no_vacio(cls, valor: str) -> str:
         limpio = valor.strip()
         if not limpio:
             raise ValueError("Este campo es obligatorio.")
         return limpio
+
+    @field_validator("dni")
+    @classmethod
+    def validar_dni_registro(cls, valor: str) -> str:
+        return _normalizar_y_validar_dni_ar(valor)
+
+    @field_validator("telefono")
+    @classmethod
+    def validar_telefono_registro(cls, valor: str) -> str:
+        return _normalizar_y_validar_telefono_ar(valor)
 
     @field_validator("email")
     @classmethod
@@ -261,6 +313,7 @@ class PedidoPublicoCreate(BaseModel):
     """Datos unificados enviados desde el portal público de solicitud de servicios."""
 
     nombre_contacto: str = Field(min_length=1, max_length=80)
+    telefono: Optional[str] = Field(default=None, max_length=30)
     zona: str = Field(min_length=1, max_length=120)
     tipo_servicio: TipoServicioPermitido
     fecha_hora: datetime
@@ -273,6 +326,19 @@ class PedidoPublicoCreate(BaseModel):
         if not limpio:
             raise ValueError("El campo no puede estar vacío.")
         return limpio
+
+    @model_validator(mode="after")
+    def validar_telefono_pedido(self) -> "PedidoPublicoCreate":
+        if self.telefono is not None and self.telefono.strip():
+            self.telefono = _normalizar_y_validar_telefono_ar(self.telefono)
+        else:
+            digitos_en_contacto = re.sub(r"\D", "", self.nombre_contacto)
+            if not re.fullmatch(r"\d{10}", digitos_en_contacto):
+                raise ValueError(
+                    "El teléfono debe tener exactamente 10 dígitos numéricos (sin 0 ni 15, ej: 3888458611)."
+                )
+            self.telefono = digitos_en_contacto
+        return self
 
 
 class PedidoPublicoRead(ServicioRead):

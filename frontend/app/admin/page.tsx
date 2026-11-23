@@ -241,6 +241,7 @@ export default function AdminPage() {
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginPassword, setLoginPassword] = useState<string>("");
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -281,6 +282,7 @@ export default function AdminPage() {
   const [isProviderModalOpen, setIsProviderModalOpen] = useState(false);
   const [providerFormData, setProviderFormData] =
     useState<NewProviderForm>(initialProviderForm);
+  const [showProviderPassword, setShowProviderPassword] = useState(false);
   const [isProviderSubmitting, setIsProviderSubmitting] = useState(false);
   const [providerFormError, setProviderFormError] = useState<string | null>(null);
 
@@ -875,8 +877,31 @@ export default function AdminPage() {
 
   async function handleProviderSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setIsProviderSubmitting(true);
     setProviderFormError(null);
+
+    const dniLimpio = providerFormData.dni.replace(/\D/g, "");
+    const telefonoLimpio = providerFormData.telefono.replace(/\D/g, "");
+
+    if (
+      dniLimpio &&
+      ((dniLimpio.length !== 7 && dniLimpio.length !== 8) ||
+        Number(dniLimpio) < 1_000_000 ||
+        Number(dniLimpio) > 99_999_999)
+    ) {
+      setProviderFormError(
+        "El DNI debe tener 7 u 8 dígitos numéricos válidos de Argentina (sin puntos, ej: 35307783).",
+      );
+      return;
+    }
+
+    if (telefonoLimpio && telefonoLimpio.length !== 10) {
+      setProviderFormError(
+        "El teléfono debe tener exactamente 10 dígitos numéricos (sin 0 ni 15, ej: 3888458611).",
+      );
+      return;
+    }
+
+    setIsProviderSubmitting(true);
 
     try {
       const response = await fetch(`${getApiBaseUrl()}/prestadores/`, {
@@ -889,8 +914,8 @@ export default function AdminPage() {
           rol: providerFormData.rol.trim(),
           email: providerFormData.email.trim().toLowerCase(),
           password: providerFormData.password,
-          dni: providerFormData.dni.trim() || null,
-          telefono: providerFormData.telefono.trim() || null,
+          dni: dniLimpio || null,
+          telefono: telefonoLimpio || null,
           barrio_cobertura: providerFormData.barrio_cobertura || null,
           disponibilidad: true,
           estado: "activo",
@@ -906,7 +931,10 @@ export default function AdminPage() {
         const detail =
           responseBody && typeof responseBody.detail === "string"
             ? responseBody.detail
-            : "No se pudo registrar el prestador.";
+            : Array.isArray(responseBody?.detail) &&
+                typeof responseBody.detail[0]?.msg === "string"
+              ? responseBody.detail[0].msg.replace(/^Value error,\s*/i, "")
+              : "No se pudo registrar el prestador.";
         throw new Error(detail);
       }
 
@@ -1185,16 +1213,53 @@ export default function AdminPage() {
               >
                 Contraseña
               </label>
-              <input
-                id="admin-login-password"
-                type="password"
-                autoComplete="current-password"
-                value={loginPassword}
-                onChange={(event) => setLoginPassword(event.target.value)}
-                placeholder="••••••••"
-                required
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
-              />
+              <div className="relative">
+                <input
+                  id="admin-login-password"
+                  type={showLoginPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  value={loginPassword}
+                  onChange={(event) => setLoginPassword(event.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 pr-11 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((prev) => !prev)}
+                  aria-label="Mostrar u ocultar contraseña"
+                  className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400 transition hover:text-cyan-300"
+                >
+                  {showLoginPassword ? (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="h-4 w-4"
+                      aria-hidden="true"
+                    >
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="h-4 w-4"
+                      aria-hidden="true"
+                    >
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
 
             {loginError && (
@@ -2465,64 +2530,121 @@ export default function AdminPage() {
                 <label htmlFor="providerPassword" className="mb-2 block text-sm font-semibold text-slate-700">
                   Contraseña inicial <span className="text-rose-600">*</span>
                 </label>
-                <input
-                  id="providerPassword"
-                  name="providerPassword"
-                  type="password"
-                  minLength={4}
-                  maxLength={128}
-                  value={providerFormData.password}
-                  onChange={(event) =>
-                    setProviderFormData((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }))
-                  }
-                  placeholder="Mínimo 4 caracteres"
-                  required
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
-                />
+                <div className="relative">
+                  <input
+                    id="providerPassword"
+                    name="providerPassword"
+                    type={showProviderPassword ? "text" : "password"}
+                    minLength={4}
+                    maxLength={128}
+                    value={providerFormData.password}
+                    onChange={(event) =>
+                      setProviderFormData((current) => ({
+                        ...current,
+                        password: event.target.value,
+                      }))
+                    }
+                    placeholder="Mínimo 4 caracteres"
+                    required
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-11 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowProviderPassword((prev) => !prev)}
+                    aria-label="Mostrar u ocultar contraseña"
+                    className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400 transition hover:text-cyan-700"
+                  >
+                    {showProviderPassword ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                      >
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        className="h-4 w-4"
+                        aria-hidden="true"
+                      >
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="providerDni" className="mb-2 block text-sm font-semibold text-slate-700">
-                    DNI
-                  </label>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <label htmlFor="providerDni" className="block text-sm font-semibold text-slate-700">
+                      DNI (AR)
+                    </label>
+                    <span className="text-xs font-medium text-slate-400">
+                      {providerFormData.dni.length}/8
+                    </span>
+                  </div>
                   <input
                     id="providerDni"
                     name="providerDni"
                     type="text"
-                    maxLength={30}
+                    inputMode="numeric"
+                    maxLength={8}
                     value={providerFormData.dni}
                     onChange={(event) =>
                       setProviderFormData((current) => ({
                         ...current,
-                        dni: event.target.value,
+                        dni: event.target.value.replace(/\D/g, "").slice(0, 8),
                       }))
                     }
-                    placeholder="Ej. 35.412.890"
+                    placeholder="Ej: 35307783 (sin puntos)"
                     className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="providerTelefono" className="mb-2 block text-sm font-semibold text-slate-700">
-                    Teléfono / WhatsApp
-                  </label>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <label htmlFor="providerTelefono" className="block text-sm font-semibold text-slate-700">
+                      Teléfono / WhatsApp
+                    </label>
+                    <span
+                      className={`text-xs font-bold ${
+                        providerFormData.telefono.length === 10
+                          ? "text-emerald-700"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {providerFormData.telefono.length}/10
+                    </span>
+                  </div>
                   <input
                     id="providerTelefono"
                     name="providerTelefono"
-                    type="text"
-                    maxLength={50}
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
                     value={providerFormData.telefono}
                     onChange={(event) =>
                       setProviderFormData((current) => ({
                         ...current,
-                        telefono: event.target.value,
+                        telefono: event.target.value
+                          .replace(/\D/g, "")
+                          .slice(0, 10),
                       }))
                     }
-                    placeholder="Ej. 3888 412345"
+                    placeholder="Ej: 3888458611 (sin 0 ni 15)"
                     className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                   />
                 </div>

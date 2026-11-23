@@ -140,12 +140,15 @@ export default function PrestadorPortalPage() {
   const [prestador, setPrestador] = useState<PrestadorSesion | null>(null);
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginPassword, setLoginPassword] = useState<string>("");
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
   // Estado del formulario de postulación ("Registrarme como Prestador")
   const [registroForm, setRegistroForm] =
     useState<RegistroPostulanteForm>(initialRegistroForm);
+  const [showRegistroPassword, setShowRegistroPassword] =
+    useState<boolean>(false);
   const [isRegistering, setIsRegistering] = useState<boolean>(false);
   const [registroError, setRegistroError] = useState<string | null>(null);
   const [registroExitoso, setRegistroExitoso] = useState<{
@@ -267,15 +270,34 @@ export default function PrestadorPortalPage() {
     event.preventDefault();
     setRegistroError(null);
 
+    const dniLimpio = registroForm.dni.replace(/\D/g, "");
+    const telefonoLimpio = registroForm.telefono.replace(/\D/g, "");
+
     if (
       !registroForm.nombre.trim() ||
-      !registroForm.dni.trim() ||
-      !registroForm.telefono.trim() ||
       !registroForm.email.trim() ||
       registroForm.password.length < 4
     ) {
       setRegistroError(
-        "Completá todos los campos obligatorios (contraseña mínimo 4 caracteres).",
+        "Completá tu nombre, correo electrónico y una contraseña de al menos 4 caracteres.",
+      );
+      return;
+    }
+
+    if (
+      (dniLimpio.length !== 7 && dniLimpio.length !== 8) ||
+      Number(dniLimpio) < 1_000_000 ||
+      Number(dniLimpio) > 99_999_999
+    ) {
+      setRegistroError(
+        "El DNI debe tener 7 u 8 dígitos numéricos válidos de Argentina (sin puntos, ej: 35307783).",
+      );
+      return;
+    }
+
+    if (telefonoLimpio.length !== 10) {
+      setRegistroError(
+        "El teléfono debe tener exactamente 10 dígitos numéricos (sin 0 ni 15, ej: 3888458611).",
       );
       return;
     }
@@ -287,8 +309,8 @@ export default function PrestadorPortalPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nombre: registroForm.nombre.trim(),
-          dni: registroForm.dni.trim(),
-          telefono: registroForm.telefono.trim(),
+          dni: dniLimpio,
+          telefono: telefonoLimpio,
           email: registroForm.email.trim().toLowerCase(),
           password: registroForm.password,
           especialidad: registroForm.especialidad,
@@ -302,7 +324,10 @@ export default function PrestadorPortalPage() {
         const detail =
           body && typeof body.detail === "string"
             ? body.detail
-            : "No se pudo enviar tu postulación. Verificá los datos ingresados.";
+            : Array.isArray(body?.detail) &&
+                typeof body.detail[0]?.msg === "string"
+              ? body.detail[0].msg.replace(/^Value error,\s*/i, "")
+              : "No se pudo enviar tu postulación. Verificá los datos ingresados.";
         throw new Error(detail);
       }
 
@@ -666,16 +691,53 @@ export default function PrestadorPortalPage() {
                   >
                     Contraseña
                   </label>
-                  <input
-                    id="prestador-login-password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••"
-                    required
-                    className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
-                  />
+                  <div className="relative">
+                    <input
+                      id="prestador-login-password"
+                      type={showLoginPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 pr-11 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((prev) => !prev)}
+                      aria-label="Mostrar u ocultar contraseña"
+                      className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400 transition hover:text-cyan-300"
+                    >
+                      {showLoginPassword ? (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      ) : (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {loginError && (
@@ -772,25 +834,31 @@ export default function PrestadorPortalPage() {
                   </div>
 
                   <div>
-                    <label
-                      htmlFor="reg-dni"
-                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
-                    >
-                      DNI *
-                    </label>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="reg-dni"
+                        className="block text-xs font-bold uppercase tracking-wider text-slate-300"
+                      >
+                        DNI (AR) *
+                      </label>
+                      <span className="text-[11px] font-semibold text-slate-400">
+                        {registroForm.dni.length}/8
+                      </span>
+                    </div>
                     <input
                       id="reg-dni"
                       type="text"
+                      inputMode="numeric"
                       required
-                      maxLength={30}
+                      maxLength={8}
                       value={registroForm.dni}
                       onChange={(e) =>
                         setRegistroForm((prev) => ({
                           ...prev,
-                          dni: e.target.value,
+                          dni: e.target.value.replace(/\D/g, "").slice(0, 8),
                         }))
                       }
-                      placeholder="Ej. 35.412.890"
+                      placeholder="Ej: 35307783 (sin puntos)"
                       className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
                     />
                   </div>
@@ -798,25 +866,39 @@ export default function PrestadorPortalPage() {
 
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                   <div>
-                    <label
-                      htmlFor="reg-telefono"
-                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
-                    >
-                      Teléfono / WhatsApp *
-                    </label>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="reg-telefono"
+                        className="block text-xs font-bold uppercase tracking-wider text-slate-300"
+                      >
+                        Teléfono / WhatsApp *
+                      </label>
+                      <span
+                        className={`text-[11px] font-bold ${
+                          registroForm.telefono.length === 10
+                            ? "text-emerald-400"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {registroForm.telefono.length}/10
+                      </span>
+                    </div>
                     <input
                       id="reg-telefono"
-                      type="text"
+                      type="tel"
+                      inputMode="numeric"
                       required
-                      maxLength={50}
+                      maxLength={10}
                       value={registroForm.telefono}
                       onChange={(e) =>
                         setRegistroForm((prev) => ({
                           ...prev,
-                          telefono: e.target.value,
+                          telefono: e.target.value
+                            .replace(/\D/g, "")
+                            .slice(0, 10),
                         }))
                       }
-                      placeholder="Ej. 3888 412345"
+                      placeholder="Ej: 3888458611 (sin 0 ni 15)"
                       className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
                     />
                   </div>
@@ -853,22 +935,59 @@ export default function PrestadorPortalPage() {
                   >
                     Contraseña *
                   </label>
-                  <input
-                    id="reg-password"
-                    type="password"
-                    required
-                    minLength={4}
-                    maxLength={128}
-                    value={registroForm.password}
-                    onChange={(e) =>
-                      setRegistroForm((prev) => ({
-                        ...prev,
-                        password: e.target.value,
-                      }))
-                    }
-                    placeholder="Mínimo 4 caracteres"
-                    className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
-                  />
+                  <div className="relative">
+                    <input
+                      id="reg-password"
+                      type={showRegistroPassword ? "text" : "password"}
+                      required
+                      minLength={4}
+                      maxLength={128}
+                      value={registroForm.password}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          password: e.target.value,
+                        }))
+                      }
+                      placeholder="Mínimo 4 caracteres"
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 pr-11 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegistroPassword((prev) => !prev)}
+                      aria-label="Mostrar u ocultar contraseña"
+                      className="absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400 transition hover:text-cyan-300"
+                    >
+                      {showRegistroPassword ? (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      ) : (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">

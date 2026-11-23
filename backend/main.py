@@ -1243,7 +1243,11 @@ def crear_pedido_publico(
 ) -> PedidoPublicoRead:
     """Registra un pedido desde el portal público reutilizando o creando la persona usuaria."""
 
-    canal_limpio = payload.nombre_contacto.strip()
+    nombre_base = payload.nombre_contacto.strip()
+    if payload.telefono and payload.telefono not in re.sub(r"\D", "", nombre_base):
+        canal_limpio = f"{nombre_base} - {payload.telefono}"[:80]
+    else:
+        canal_limpio = nombre_base[:80]
     preferencias_limpias = (
         payload.preferencias.strip()
         if payload.preferencias and payload.preferencias.strip()
