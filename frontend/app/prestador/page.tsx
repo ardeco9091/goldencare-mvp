@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
+  BARRIOS_SAN_PEDRO,
   formatearMonedaARS,
   getApiBaseUrl,
   obtenerTarifaServicio,
   parsearPrestador,
+  type BarrioSanPedro,
 } from "../constants/barrios";
 
 type EstadoServicio =
@@ -22,6 +24,36 @@ type PrestadorSesion = {
   especialidad: string;
   rol: string;
   email: string;
+  barrio_cobertura?: string | null;
+};
+
+type RegistroPostulanteForm = {
+  nombre: string;
+  dni: string;
+  telefono: string;
+  email: string;
+  password: string;
+  especialidad: string;
+  barrio_cobertura: BarrioSanPedro;
+  experiencia: string;
+};
+
+const ESPECIALIDADES_PRESTADOR = [
+  "Acompañamiento",
+  "Traslados",
+  "Mandados y Farmacia",
+  "Asistencia Integral",
+] as const;
+
+const initialRegistroForm: RegistroPostulanteForm = {
+  nombre: "",
+  dni: "",
+  telefono: "",
+  email: "",
+  password: "",
+  especialidad: ESPECIALIDADES_PRESTADOR[0],
+  barrio_cobertura: BARRIOS_SAN_PEDRO[0],
+  experiencia: "",
 };
 
 type Servicio = {
@@ -101,14 +133,27 @@ function obtenerMontos(servicio: Servicio) {
 }
 
 export default function PrestadorPortalPage() {
-  // Autenticación del prestador
+  // Autenticación y autoregistro del prestador
   const [authChecked, setAuthChecked] = useState<boolean>(false);
+  const [authTab, setAuthTab] = useState<"login" | "registro">("login");
   const [token, setToken] = useState<string | null>(null);
   const [prestador, setPrestador] = useState<PrestadorSesion | null>(null);
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginPassword, setLoginPassword] = useState<string>("");
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Estado del formulario de postulación ("Registrarme como Prestador")
+  const [registroForm, setRegistroForm] =
+    useState<RegistroPostulanteForm>(initialRegistroForm);
+  const [isRegistering, setIsRegistering] = useState<boolean>(false);
+  const [registroError, setRegistroError] = useState<string | null>(null);
+  const [registroExitoso, setRegistroExitoso] = useState<{
+    nombre: string;
+    email: string;
+    especialidad: string;
+    barrio_cobertura: string;
+  } | null>(null);
 
   // Estado operativo
   const [services, setServices] = useState<Servicio[]>([]);
@@ -215,6 +260,68 @@ export default function PrestadorPortalPage() {
       );
     } finally {
       setIsLoggingIn(false);
+    }
+  }
+
+  async function handleRegistroSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRegistroError(null);
+
+    if (
+      !registroForm.nombre.trim() ||
+      !registroForm.dni.trim() ||
+      !registroForm.telefono.trim() ||
+      !registroForm.email.trim() ||
+      registroForm.password.length < 4
+    ) {
+      setRegistroError(
+        "Completá todos los campos obligatorios (contraseña mínimo 4 caracteres).",
+      );
+      return;
+    }
+
+    setIsRegistering(true);
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/prestadores/registro`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: registroForm.nombre.trim(),
+          dni: registroForm.dni.trim(),
+          telefono: registroForm.telefono.trim(),
+          email: registroForm.email.trim().toLowerCase(),
+          password: registroForm.password,
+          especialidad: registroForm.especialidad,
+          barrio_cobertura: registroForm.barrio_cobertura,
+          experiencia: registroForm.experiencia.trim() || null,
+        }),
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          body && typeof body.detail === "string"
+            ? body.detail
+            : "No se pudo enviar tu postulación. Verificá los datos ingresados.";
+        throw new Error(detail);
+      }
+
+      setRegistroExitoso({
+        nombre: registroForm.nombre.trim(),
+        email: registroForm.email.trim().toLowerCase(),
+        especialidad: registroForm.especialidad,
+        barrio_cobertura: registroForm.barrio_cobertura,
+      });
+      setLoginEmail(registroForm.email.trim().toLowerCase());
+      setRegistroForm(initialRegistroForm);
+    } catch (err) {
+      setRegistroError(
+        err instanceof Error
+          ? err.message
+          : "Ocurrió un error al enviar tu solicitud de registro.",
+      );
+    } finally {
+      setIsRegistering(false);
     }
   }
 
@@ -469,7 +576,7 @@ export default function PrestadorPortalPage() {
   if (!token || !prestador) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-10 text-slate-100">
-        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900 p-7 shadow-2xl sm:p-8">
+        <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-900 p-6 shadow-2xl sm:p-8">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400 text-2xl font-extrabold text-slate-950">
               G
@@ -479,84 +586,388 @@ export default function PrestadorPortalPage() {
                 GoldenCare · San Pedro de Jujuy
               </p>
               <h1 className="text-xl font-bold text-white">
-                Acceso Prestadores
+                Portal del Prestador
               </h1>
             </div>
           </div>
 
-          <p className="mt-4 text-sm text-slate-400">
-            Ingresá con tu correo electrónico y contraseña para ver solicitudes
-            disponibles, aceptar pedidos y consultar tus ganancias netas (85%).
-          </p>
-
-          <form onSubmit={handleLogin} className="mt-6 space-y-4">
-            <div>
-              <label
-                htmlFor="prestador-login-email"
-                className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
-              >
-                Correo Electrónico
-              </label>
-              <input
-                id="prestador-login-email"
-                type="email"
-                autoComplete="email"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="laura.mendez@goldencare.com"
-                required
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="prestador-login-password"
-                className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
-              >
-                Contraseña
-              </label>
-              <input
-                id="prestador-login-password"
-                type="password"
-                autoComplete="current-password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
-              />
-            </div>
-
-            {loginError && (
-              <div
-                role="alert"
-                className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs font-semibold text-rose-200"
-              >
-                {loginError}
-              </div>
-            )}
-
+          {/* Selector de pestañas: Iniciar Sesión / Registrarme como Prestador */}
+          <div
+            role="tablist"
+            aria-label="Acceso o registro de prestador"
+            className="mt-6 grid grid-cols-2 gap-2 rounded-2xl bg-slate-950 p-1.5"
+          >
             <button
-              type="submit"
-              disabled={isLoggingIn}
-              className="mt-2 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-cyan-400 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-sm transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              role="tab"
+              aria-selected={authTab === "login"}
+              onClick={() => {
+                setAuthTab("login");
+                setLoginError(null);
+              }}
+              className={`rounded-xl px-3 py-2.5 text-xs font-bold transition sm:text-sm ${
+                authTab === "login"
+                  ? "bg-cyan-400 text-slate-950 shadow-sm"
+                  : "text-slate-300 hover:text-white"
+              }`}
             >
-              {isLoggingIn ? "Ingresando..." : "Ingresar al Portal"}
+              Iniciar Sesión
             </button>
-          </form>
-
-          {/* Aviso discreto de acceso demo */}
-          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-3.5 text-xs text-slate-400">
-            <p className="font-semibold text-cyan-300">
-              Cuentas demo de prueba (clave: <code className="text-white">prestador123</code>)
-            </p>
-            <ul className="mt-1.5 space-y-0.5 font-mono text-[11px] text-slate-300">
-              <li>laura.mendez@goldencare.com</li>
-              <li>roberto.gomez@goldencare.com</li>
-              <li>carolina.vega@goldencare.com</li>
-            </ul>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={authTab === "registro"}
+              onClick={() => {
+                setAuthTab("registro");
+                setRegistroError(null);
+              }}
+              className={`rounded-xl px-3 py-2.5 text-xs font-bold transition sm:text-sm ${
+                authTab === "registro"
+                  ? "bg-cyan-400 text-slate-950 shadow-sm"
+                  : "text-slate-300 hover:text-white"
+              }`}
+            >
+              Registrarme como Prestador
+            </button>
           </div>
+
+          {authTab === "login" ? (
+            <>
+              <p className="mt-5 text-sm text-slate-400">
+                Ingresá con tu correo electrónico y contraseña para ver
+                solicitudes disponibles, aceptar pedidos y consultar tus
+                ganancias netas (85%).
+              </p>
+
+              <form onSubmit={handleLogin} className="mt-5 space-y-4">
+                <div>
+                  <label
+                    htmlFor="prestador-login-email"
+                    className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                  >
+                    Correo Electrónico
+                  </label>
+                  <input
+                    id="prestador-login-email"
+                    type="email"
+                    autoComplete="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="laura.mendez@goldencare.com"
+                    required
+                    className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="prestador-login-password"
+                    className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                  >
+                    Contraseña
+                  </label>
+                  <input
+                    id="prestador-login-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                  />
+                </div>
+
+                {loginError && (
+                  <div
+                    role="alert"
+                    className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs font-semibold text-rose-200"
+                  >
+                    {loginError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isLoggingIn}
+                  className="mt-2 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-cyan-400 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-sm transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isLoggingIn ? "Ingresando..." : "Ingresar al Portal"}
+                </button>
+              </form>
+
+              {/* Aviso discreto de acceso demo */}
+              <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-3.5 text-xs text-slate-400">
+                <p className="font-semibold text-cyan-300">
+                  Cuentas demo habilitadas (clave:{" "}
+                  <code className="text-white">prestador123</code>)
+                </p>
+                <ul className="mt-1.5 space-y-0.5 font-mono text-[11px] text-slate-300">
+                  <li>laura.mendez@goldencare.com</li>
+                  <li>roberto.gomez@goldencare.com</li>
+                  <li>carolina.vega@goldencare.com</li>
+                </ul>
+              </div>
+            </>
+          ) : registroExitoso ? (
+            <div className="mt-6 rounded-2xl border border-amber-400/35 bg-amber-500/10 p-5 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-400/20 text-2xl">
+                ⏳
+              </div>
+              <span className="mt-3 inline-flex rounded-full bg-amber-400/20 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-200">
+                Pendiente de Verificación
+              </span>
+              <h2 className="mt-3 text-lg font-bold text-white">
+                ¡Recibimos tu postulación, {registroExitoso.nombre}!
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-slate-300">
+                Tu cuenta (<strong className="text-white">{registroExitoso.email}</strong>)
+                quedó registrada para <strong className="text-cyan-300">{registroExitoso.especialidad}</strong> en{" "}
+                <strong>{registroExitoso.barrio_cobertura}</strong>. Un coordinador
+                de GoldenCare verificará tus datos antes de habilitarte para aceptar pedidos.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setRegistroExitoso(null);
+                  setAuthTab("login");
+                }}
+                className="mt-5 inline-flex min-h-[44px] w-full items-center justify-center rounded-xl bg-cyan-400 px-4 py-2.5 text-sm font-extrabold text-slate-950 transition hover:bg-cyan-300"
+              >
+                Ir a Iniciar Sesión
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="mt-5 text-sm text-slate-400">
+                Completá tus datos para postularte como prestador en San Pedro de
+                Jujuy. Tu cuenta quedará pendiente de verificación por el
+                coordinador.
+              </p>
+
+              <form onSubmit={handleRegistroSubmit} className="mt-5 space-y-3.5">
+                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="reg-nombre"
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                    >
+                      Nombre y Apellido *
+                    </label>
+                    <input
+                      id="reg-nombre"
+                      type="text"
+                      required
+                      maxLength={60}
+                      value={registroForm.nombre}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          nombre: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. Lucía Fernández"
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="reg-dni"
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                    >
+                      DNI *
+                    </label>
+                    <input
+                      id="reg-dni"
+                      type="text"
+                      required
+                      maxLength={30}
+                      value={registroForm.dni}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          dni: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. 35.412.890"
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="reg-telefono"
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                    >
+                      Teléfono / WhatsApp *
+                    </label>
+                    <input
+                      id="reg-telefono"
+                      type="text"
+                      required
+                      maxLength={50}
+                      value={registroForm.telefono}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          telefono: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. 3888 412345"
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="reg-email"
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                    >
+                      Correo Electrónico *
+                    </label>
+                    <input
+                      id="reg-email"
+                      type="email"
+                      required
+                      maxLength={120}
+                      value={registroForm.email}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          email: e.target.value,
+                        }))
+                      }
+                      placeholder="lucia@ejemplo.com"
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="reg-password"
+                    className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                  >
+                    Contraseña *
+                  </label>
+                  <input
+                    id="reg-password"
+                    type="password"
+                    required
+                    minLength={4}
+                    maxLength={128}
+                    value={registroForm.password}
+                    onChange={(e) =>
+                      setRegistroForm((prev) => ({
+                        ...prev,
+                        password: e.target.value,
+                      }))
+                    }
+                    placeholder="Mínimo 4 caracteres"
+                    className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="reg-especialidad"
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                    >
+                      Especialidad *
+                    </label>
+                    <select
+                      id="reg-especialidad"
+                      value={registroForm.especialidad}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          especialidad: e.target.value,
+                        }))
+                      }
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    >
+                      {ESPECIALIDADES_PRESTADOR.map((esp) => (
+                        <option key={esp} value={esp}>
+                          {esp}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="reg-barrio"
+                      className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                    >
+                      Barrio de cobertura *
+                    </label>
+                    <select
+                      id="reg-barrio"
+                      value={registroForm.barrio_cobertura}
+                      onChange={(e) =>
+                        setRegistroForm((prev) => ({
+                          ...prev,
+                          barrio_cobertura: e.target.value as BarrioSanPedro,
+                        }))
+                      }
+                      className="w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                    >
+                      {BARRIOS_SAN_PEDRO.map((barrio) => (
+                        <option key={barrio} value={barrio}>
+                          {barrio}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="reg-experiencia"
+                    className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-300"
+                  >
+                    Experiencia y Referencias
+                  </label>
+                  <textarea
+                    id="reg-experiencia"
+                    rows={3}
+                    value={registroForm.experiencia}
+                    onChange={(e) =>
+                      setRegistroForm((prev) => ({
+                        ...prev,
+                        experiencia: e.target.value,
+                      }))
+                    }
+                    placeholder="Contanos tu experiencia acompañando adultos mayores, disponibilidad horaria o si contás con movilidad propia..."
+                    className="w-full resize-none rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+                  />
+                </div>
+
+                {registroError && (
+                  <div
+                    role="alert"
+                    className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs font-semibold text-rose-200"
+                  >
+                    {registroError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isRegistering}
+                  className="mt-2 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-cyan-400 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-sm transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isRegistering
+                    ? "Enviando postulación..."
+                    : "Enviar Postulación"}
+                </button>
+              </form>
+            </>
+          )}
 
           <div className="mt-5 text-center text-xs text-slate-400">
             <Link href="/" className="transition hover:text-cyan-300">

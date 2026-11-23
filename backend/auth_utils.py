@@ -112,16 +112,19 @@ def create_access_token(
     subject: str,
     role: str,
     email: str,
+    id_prestador: str | None = None,
     ttl_seconds: int = TOKEN_TTL_SECONDS,
 ) -> str:
     """Crea un token compacto firmado con HMAC-SHA256."""
 
-    payload = {
+    payload: dict[str, Any] = {
         "sub": subject,
         "role": role,
         "email": email,
         "exp": int(time.time()) + ttl_seconds,
     }
+    if id_prestador is not None:
+        payload["id_prestador"] = id_prestador
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
         "utf-8"
     )

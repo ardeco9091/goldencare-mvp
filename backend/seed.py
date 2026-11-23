@@ -158,22 +158,25 @@ def asegurar_columnas_prestador_auth() -> None:
         return
     existentes = {col["name"] for col in inspector.get_columns("prestador")}
     es_pg = engine.dialect.name == "postgresql"
+    columnas = [
+        ("email", "VARCHAR(120)"),
+        ("password_hash", "VARCHAR(255)"),
+        ("dni", "VARCHAR(30)"),
+        ("telefono", "VARCHAR(50)"),
+        ("barrio_cobertura", "VARCHAR(120)"),
+        ("experiencia", "TEXT"),
+        ("estado_verificacion", "VARCHAR(30) NOT NULL DEFAULT 'aprobado'"),
+    ]
     with engine.begin() as conn:
-        for col, longitud in [("email", 120), ("password_hash", 255)]:
+        for col, tipo in columnas:
             if es_pg:
                 conn.execute(
                     text(
-                        f"ALTER TABLE prestador ADD COLUMN IF NOT EXISTS "
-                        f"{col} VARCHAR({longitud})"
+                        f"ALTER TABLE prestador ADD COLUMN IF NOT EXISTS {col} {tipo}"
                     )
                 )
             elif col not in existentes:
-                conn.execute(
-                    text(
-                        f"ALTER TABLE prestador ADD COLUMN "
-                        f"{col} VARCHAR({longitud})"
-                    )
-                )
+                conn.execute(text(f"ALTER TABLE prestador ADD COLUMN {col} {tipo}"))
 
 
 def seed() -> None:
@@ -221,6 +224,11 @@ def seed() -> None:
             "rol": "Laura Méndez - Acompañamiento",
             "email": "laura.mendez@goldencare.com",
             "password_hash": default_hash,
+            "dni": "34.512.890",
+            "telefono": "3888 421100",
+            "barrio_cobertura": "Centro / Microcentro",
+            "experiencia": "5 años en acompañamiento domiciliario a personas mayores en San Pedro.",
+            "estado_verificacion": "aprobado",
             "disponibilidad": True,
             "estado": "activo",
         },
@@ -228,6 +236,11 @@ def seed() -> None:
             "rol": "Roberto Gómez - Traslados",
             "email": "roberto.gomez@goldencare.com",
             "password_hash": default_hash,
+            "dni": "29.874.321",
+            "telefono": "3888 455210",
+            "barrio_cobertura": "Barrio Belgrano",
+            "experiencia": "Vehículo adaptado y experiencia en traslados a controles médicos en Hospital Paterson.",
+            "estado_verificacion": "aprobado",
             "disponibilidad": True,
             "estado": "activo",
         },
@@ -235,6 +248,11 @@ def seed() -> None:
             "rol": "Carolina Vega - Mandados y Farmacia",
             "email": "carolina.vega@goldencare.com",
             "password_hash": default_hash,
+            "dni": "37.210.654",
+            "telefono": "3888 519844",
+            "barrio_cobertura": "Barrio Providencia",
+            "experiencia": "Gestión de recetas PAMI, compras de farmacia y mandados barriales.",
+            "estado_verificacion": "aprobado",
             "disponibilidad": True,
             "estado": "activo",
         },

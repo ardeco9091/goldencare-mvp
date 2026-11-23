@@ -114,6 +114,11 @@ class Prestador(Base):
     rol: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, unique=True, index=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    dni: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    telefono: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    barrio_cobertura: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    experiencia: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    estado_verificacion: Mapped[str] = mapped_column(String(30), nullable=False, default="aprobado")
     disponibilidad: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     estado: Mapped[str] = mapped_column(String(30), nullable=False, default="activo")
 

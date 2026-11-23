@@ -59,6 +59,11 @@ type Prestador = {
   id_prestador: string;
   rol: string;
   email?: string | null;
+  dni?: string | null;
+  telefono?: string | null;
+  barrio_cobertura?: string | null;
+  experiencia?: string | null;
+  estado_verificacion?: string;
   disponibilidad: boolean;
   estado: string;
 };
@@ -95,6 +100,9 @@ type NewProviderForm = {
   rol: string;
   email: string;
   password: string;
+  dni: string;
+  telefono: string;
+  barrio_cobertura: BarrioSanPedro;
 };
 
 const initialForm: NewServiceForm = {
@@ -116,6 +124,9 @@ const initialProviderForm: NewProviderForm = {
   rol: "",
   email: "",
   password: "",
+  dni: "",
+  telefono: "",
+  barrio_cobertura: BARRIOS_SAN_PEDRO[0],
 };
 
 const initialMetrics: Metricas = {
@@ -236,6 +247,10 @@ export default function AdminPage() {
   const [services, setServices] = useState<Servicio[]>([]);
   const [users, setUsers] = useState<Usuario[]>([]);
   const [providers, setProviders] = useState<Prestador[]>([]);
+  const [pendingProviders, setPendingProviders] = useState<Prestador[]>([]);
+  const [verifyingProviderId, setVerifyingProviderId] = useState<string | null>(
+    null,
+  );
   const [metricsData, setMetricsData] = useState<Metricas>(initialMetrics);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number | null>(null);
@@ -282,11 +297,19 @@ export default function AdminPage() {
         metricsResponse,
         usersResponse,
         providersResponse,
+        pendingProvidersResponse,
       ] = await Promise.all([
         fetch(`${baseUrl}/servicios/`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/metricas`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/usuarios/`, { cache: "no-store", signal }),
         fetch(`${baseUrl}/prestadores/`, { cache: "no-store", signal }),
+        adminToken
+          ? fetch(`${baseUrl}/prestadores/pendientes`, {
+              cache: "no-store",
+              signal,
+              headers: { Authorization: `Bearer ${adminToken}` },
+            })
+          : Promise.resolve(null),
       ]);
 
       if (!servicesResponse.ok || !metricsResponse.ok) {
@@ -311,6 +334,11 @@ export default function AdminPage() {
         setProviders(providerData);
       }
 
+      if (pendingProvidersResponse && pendingProvidersResponse.ok) {
+        const pendingData: Prestador[] = await pendingProvidersResponse.json();
+        setPendingProviders(pendingData);
+      }
+
       consecutiveFailuresRef.current = 0;
       setError(null);
       setLastSyncTime(getCurrentTimeLabel());
@@ -324,7 +352,7 @@ export default function AdminPage() {
         setError("No se pudieron cargar los servicios pendientes.");
       }
     }
-  }, []);
+  }, [adminToken]);
 
   const loadServices = useCallback(async (signal?: AbortSignal) => {
     const baseUrl = getApiBaseUrl();
@@ -516,12 +544,23 @@ export default function AdminPage() {
         }
         return response.json() as Promise<Metricas>;
       }),
+      fetch(`${baseUrl}/prestadores/pendientes`, {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      }).then((response) => {
+        if (!response.ok) {
+          return [] as Prestador[];
+        }
+        return response.json() as Promise<Prestador[]>;
+      }),
     ])
-      .then(([serviceData, userData, providerData, liveMetrics]) => {
+      .then(([serviceData, userData, providerData, liveMetrics, pendingData]) => {
         setServices(serviceData);
         setUsers(userData);
         setProviders(providerData);
         setMetricsData(liveMetrics);
+        setPendingProviders(pendingData);
         consecutiveFailuresRef.current = 0;
         setLastSyncTime(getCurrentTimeLabel());
         setNowMs(Date.now());
@@ -850,6 +889,9 @@ export default function AdminPage() {
           rol: providerFormData.rol.trim(),
           email: providerFormData.email.trim().toLowerCase(),
           password: providerFormData.password,
+          dni: providerFormData.dni.trim() || null,
+          telefono: providerFormData.telefono.trim() || null,
+          barrio_cobertura: providerFormData.barrio_cobertura || null,
           disponibilidad: true,
           estado: "activo",
         }),
@@ -879,6 +921,57 @@ export default function AdminPage() {
       );
     } finally {
       setIsProviderSubmitting(false);
+    }
+  }
+
+  async function handleVerifyProvider(
+    idPrestador: string,
+    accion: "aprobar" | "rechazar",
+  ) {
+    if (!adminToken) {
+      handleAdminLogout("Tu sesión expiró. Volvé a iniciar sesión.");
+      return;
+    }
+
+    setVerifyingProviderId(idPrestador);
+    setStatusError(null);
+
+    try {
+      const response = await fetch(
+        `${getApiBaseUrl()}/prestadores/${encodeURIComponent(idPrestador)}/verificar`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({ accion }),
+        },
+      );
+
+      if (response.status === 401) {
+        handleAdminLogout("Tu sesión expiró. Volvé a iniciar sesión.");
+        return;
+      }
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          body && typeof body.detail === "string"
+            ? body.detail
+            : "No se pudo actualizar la verificación del postulante.";
+        throw new Error(detail);
+      }
+
+      await silentRefreshAll();
+    } catch (requestError) {
+      setStatusError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Ocurrió un error al verificar el postulante.",
+      );
+    } finally {
+      setVerifyingProviderId(null);
     }
   }
 
@@ -1268,6 +1361,132 @@ export default function AdminPage() {
               </article>
             ))}
           </div>
+
+          {/* Sección destacada: Postulantes Pendientes de Verificación */}
+          <section
+            id="postulantes"
+            className={`mt-8 rounded-2xl border p-5 shadow-sm sm:p-6 ${
+              pendingProviders.length > 0
+                ? "border-amber-300 bg-amber-50/70"
+                : "border-slate-200 bg-white"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h2 className="text-base font-bold text-slate-950 sm:text-lg">
+                  Postulantes Pendientes de Verificación
+                </h2>
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-extrabold ${
+                    pendingProviders.length > 0
+                      ? "bg-amber-500 text-white"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {pendingProviders.length}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600">
+                Solicitudes enviadas desde <code className="font-mono">/prestador</code> aguardando aprobación del coordinador.
+              </p>
+            </div>
+
+            {pendingProviders.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">
+                No hay postulantes pendientes de verificación en este momento.
+              </p>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {pendingProviders.map((postulante) => {
+                  const isBusy = verifyingProviderId === postulante.id_prestador;
+                  return (
+                    <article
+                      key={postulante.id_prestador}
+                      className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-3">
+                        <div>
+                          <p className="text-base font-bold text-slate-950">
+                            {postulante.rol}
+                          </p>
+                          <p className="mt-0.5 font-mono text-xs text-cyan-800">
+                            {postulante.email}
+                          </p>
+                        </div>
+                        <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">
+                          Pendiente
+                        </span>
+                      </div>
+
+                      <dl className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+                        <div>
+                          <dt className="font-semibold text-slate-400">DNI</dt>
+                          <dd className="mt-0.5 font-bold text-slate-800">
+                            {postulante.dni || "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="font-semibold text-slate-400">
+                            Teléfono
+                          </dt>
+                          <dd className="mt-0.5 font-bold text-slate-800">
+                            {postulante.telefono || "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="font-semibold text-slate-400">
+                            Barrio de cobertura
+                          </dt>
+                          <dd className="mt-0.5 font-bold text-slate-800">
+                            {postulante.barrio_cobertura || "San Pedro de Jujuy"}
+                          </dd>
+                        </div>
+                        {postulante.experiencia?.trim() && (
+                          <div className="sm:col-span-3">
+                            <dt className="font-semibold text-slate-400">
+                              Experiencia y referencias
+                            </dt>
+                            <dd className="mt-0.5 leading-relaxed text-slate-700">
+                              {postulante.experiencia}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+
+                      <div className="mt-4 flex flex-wrap gap-2.5">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            void handleVerifyProvider(
+                              postulante.id_prestador,
+                              "aprobar",
+                            )
+                          }
+                          className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {isBusy ? "Procesando..." : "✓ Verificar y Habilitar"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() =>
+                            void handleVerifyProvider(
+                              postulante.id_prestador,
+                              "rechazar",
+                            )
+                          }
+                          className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                        >
+                          ✕ Rechazar
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
           <section id="servicios" className="mt-8 rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -2263,6 +2482,74 @@ export default function AdminPage() {
                   required
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="providerDni" className="mb-2 block text-sm font-semibold text-slate-700">
+                    DNI
+                  </label>
+                  <input
+                    id="providerDni"
+                    name="providerDni"
+                    type="text"
+                    maxLength={30}
+                    value={providerFormData.dni}
+                    onChange={(event) =>
+                      setProviderFormData((current) => ({
+                        ...current,
+                        dni: event.target.value,
+                      }))
+                    }
+                    placeholder="Ej. 35.412.890"
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="providerTelefono" className="mb-2 block text-sm font-semibold text-slate-700">
+                    Teléfono / WhatsApp
+                  </label>
+                  <input
+                    id="providerTelefono"
+                    name="providerTelefono"
+                    type="text"
+                    maxLength={50}
+                    value={providerFormData.telefono}
+                    onChange={(event) =>
+                      setProviderFormData((current) => ({
+                        ...current,
+                        telefono: event.target.value,
+                      }))
+                    }
+                    placeholder="Ej. 3888 412345"
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="providerBarrio" className="mb-2 block text-sm font-semibold text-slate-700">
+                  Barrio de cobertura (San Pedro de Jujuy)
+                </label>
+                <select
+                  id="providerBarrio"
+                  name="providerBarrio"
+                  value={providerFormData.barrio_cobertura}
+                  onChange={(event) =>
+                    setProviderFormData((current) => ({
+                      ...current,
+                      barrio_cobertura: event.target.value as BarrioSanPedro,
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                >
+                  {BARRIOS_SAN_PEDRO.map((barrio) => (
+                    <option key={barrio} value={barrio}>
+                      {barrio}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {providerFormError && (

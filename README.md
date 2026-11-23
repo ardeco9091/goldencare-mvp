@@ -80,7 +80,9 @@ goldencare-mvp/
   - Estado `completado`: habilita la **encuesta de satisfacción (1 a 5 estrellas + comentario opcional)**.
 
 ### 2. Portal del Prestador (`/prestador`)
-- **Acceso autenticado por correo y contraseña:** pantalla de inicio de sesión (`POST /prestadores/login`) con sesión en `sessionStorage`, token `Bearer` firmado HMAC-SHA256 y botón **"Cerrar sesión"**.
+- **Acceso autenticado y autoregistro con verificación obligatoria:**
+  - Pestaña **Iniciar Sesión**: ingreso por correo electrónico y contraseña (`POST /prestadores/login`), con control de estado de verificación (`403` si está pendiente o rechazado), token `Bearer` firmado HMAC-SHA256 en `sessionStorage` y botón **"Cerrar sesión"**.
+  - Pestaña **Registrarme como Prestador**: formulario público de postulación (`POST /prestadores/registro`) con Nombre y Apellido, DNI, Teléfono/WhatsApp, Correo Electrónico, Contraseña, Especialidad, Barrio de cobertura en San Pedro de Jujuy y Experiencia/Referencias. Queda en estado **Pendiente de Verificación** hasta que el coordinador lo apruebe.
 - **Interfaz mobile-first:** pensada para celulares de prestadores en terreno con sincronización automática cada 4 segundos.
 - **Perfil y Ganancias exclusivas:** muestra exclusivamente las **Ganancias acumuladas (85%)** sobre servicios completados y el monto **En curso / por cobrar** del prestador autenticado.
 - **Solicitudes Disponibles (estilo Uber):** lista en tiempo real de pedidos en estado `solicitado` con badge de urgencia, barrio, dirección, ganancia neta (85%) y botón **"Aceptar Pedido"** (`POST /servicios/{id_servicio}/aceptar-prestador`, protegido por token Bearer y con control de concurrencia `409 Conflict`).
@@ -88,7 +90,8 @@ goldencare-mvp/
 
 ### 3. Panel del Coordinador (`/admin`)
 - **Acceso autenticado con Correo y Contraseña:** login mediante `POST /auth/login` (acepta correo `ADMIN_EMAIL` o usuario legacy `ADMIN_USER`) y token firmado HMAC-SHA256 guardado en `sessionStorage`, con botón **"Cerrar sesión"**.
-- **Alta de cuentas de prestadores:** el modal **Nuevo Prestador** solicita Nombre/Especialidad, **Correo Electrónico** y **Contraseña inicial** (almacenada como hash PBKDF2-SHA256) y el panel incluye un directorio visible con los correos de acceso de cada prestador activo.
+- **Verificación de Postulantes Pendientes:** sección destacada con contador en vivo (`GET /prestadores/pendientes`) que muestra DNI, teléfono, correo, especialidad, barrio y experiencia de cada postulante con botones directos **"Verificar y Habilitar"** y **"Rechazar"** (`PATCH /prestadores/{id_prestador}/verificar`).
+- **Alta directa de prestadores:** el modal **Nuevo Prestador** solicita Nombre/Especialidad, **Correo Electrónico**, **Contraseña inicial** (almacenada como hash PBKDF2-SHA256), DNI, Teléfono y Barrio de cobertura, habilitando la cuenta de inmediato.
 - **Tarjetas completas sin scroll horizontal:** lista vertical de tarjetas independientes con borde izquierdo por estado (`solicitado` ámbar, `asignado` azul, `en curso` índigo, `completado` esmeralda, `cancelado` rojo), cabecera con ID/estado/urgencia/fecha y cuerpo en 3 columnas responsivas (Cliente y Ubicación completa sin truncar, Servicio y desglose de Tarifas, Prestador y controles directos).
 - **Pestañas y filtros inteligentes:** vistas de **Servicios Activos**, **Historial Completados** (con estrellas y comentario de encuesta) y **Todas**; búsqueda instantánea, filtros por estado/tipo y ordenamiento por **urgencia horaria (próximas 24 h)**.
 - **Métricas Operativas y Financieras:** Total de Usuarios, Servicios Pendientes, Tasa de Cumplimiento, Satisfacción Promedio (`★`) y **Comisiones GoldenCare (15%)** con ingresos brutos y comisiones proyectadas en curso.
@@ -103,7 +106,10 @@ En producción se consumen de forma transparente a través del proxy `/api/*` de
 | Método | Endpoint | Descripción |
 |---|---|---|
 | `POST` | `/auth/login` | Autentica al coordinador con correo (`ADMIN_EMAIL` o usuario legacy) y contraseña; devuelve token HMAC-SHA256 con `role: "admin"` |
-| `POST` | `/prestadores/login` | Autentica a un prestador activo por correo y contraseña (PBKDF2); devuelve token HMAC-SHA256 y perfil del prestador |
+| `POST` | `/prestadores/registro` | Autoregistro público de postulantes a prestador (DNI, teléfono, email, password, especialidad, barrio y experiencia); queda `pendiente` de verificación |
+| `POST` | `/prestadores/login` | Autentica a un prestador aprobado por correo y contraseña (PBKDF2); rechaza con `403` si está pendiente o rechazado |
+| `GET` | `/prestadores/pendientes` | *(Admin)* Lista los postulantes a prestador en estado `pendiente` de verificación |
+| `PATCH` | `/prestadores/{id_prestador}/verificar` | *(Admin)* Aprueba (`aprobar`) o rechaza (`rechazar`) a un postulante a prestador |
 | `POST` | `/pedidos/publico` | Crea un pedido desde `/`, calcula tarifa/comisión/neto, crea o reutiliza el usuario y devuelve código corto de 8 caracteres |
 | `GET` | `/pedidos/consultar/{codigo_o_contacto}` | Consulta pedidos por código de 8 caracteres o coincidencia parcial en nombre/teléfono |
 | `GET` | `/servicios/` | Lista todos los servicios enriquecidos (soporta filtros `?estado=` y `?id_prestador=`) |

@@ -90,11 +90,15 @@ class PersonaUsuariaRead(PersonaUsuariaBase):
 
 
 class PrestadorCreate(BaseModel):
-    """Datos para registrar un prestador (rol almacena 'Nombre - Especialidad')."""
+    """Datos para registrar un prestador directamente desde el panel coordinador."""
 
     rol: str = Field(min_length=1, max_length=50)
     email: str = Field(min_length=3, max_length=120)
     password: str = Field(min_length=4, max_length=128)
+    dni: Optional[str] = Field(default=None, max_length=30)
+    telefono: Optional[str] = Field(default=None, max_length=50)
+    barrio_cobertura: Optional[str] = Field(default=None, max_length=120)
+    experiencia: Optional[str] = None
     disponibilidad: bool = True
     estado: str = Field(default="activo", min_length=1, max_length=30)
 
@@ -115,12 +119,52 @@ class PrestadorCreate(BaseModel):
         return limpio
 
 
+class PrestadorRegistroRequest(BaseModel):
+    """Datos enviados en el autoregistro público de un postulante a prestador."""
+
+    nombre: str = Field(min_length=2, max_length=60)
+    dni: str = Field(min_length=6, max_length=30)
+    telefono: str = Field(min_length=6, max_length=50)
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=4, max_length=128)
+    especialidad: str = Field(min_length=2, max_length=40)
+    barrio_cobertura: str = Field(min_length=2, max_length=120)
+    experiencia: Optional[str] = None
+
+    @field_validator("nombre", "dni", "telefono", "especialidad", "barrio_cobertura")
+    @classmethod
+    def validar_no_vacio(cls, valor: str) -> str:
+        limpio = valor.strip()
+        if not limpio:
+            raise ValueError("Este campo es obligatorio.")
+        return limpio
+
+    @field_validator("email")
+    @classmethod
+    def validar_email_registro(cls, valor: str) -> str:
+        limpio = valor.strip().lower()
+        if "@" not in limpio or "." not in limpio.split("@")[-1]:
+            raise ValueError("Ingresá un correo electrónico válido.")
+        return limpio
+
+
+class VerificarPrestadorRequest(BaseModel):
+    """Acción del coordinador sobre un postulante pendiente de verificación."""
+
+    accion: Literal["aprobar", "rechazar"]
+
+
 class PrestadorRead(BaseModel):
     """Representación de un prestador persistido (sin exponer password_hash)."""
 
     id_prestador: UUID
     rol: str
     email: Optional[str] = None
+    dni: Optional[str] = None
+    telefono: Optional[str] = None
+    barrio_cobertura: Optional[str] = None
+    experiencia: Optional[str] = None
+    estado_verificacion: str = "aprobado"
     disponibilidad: bool = True
     estado: str = "activo"
     model_config = ConfigDict(from_attributes=True)
@@ -158,6 +202,7 @@ class PrestadorAuthInfo(BaseModel):
     especialidad: str
     rol: str
     email: str
+    barrio_cobertura: Optional[str] = None
 
 
 class PrestadorLoginResponse(BaseModel):
@@ -165,6 +210,7 @@ class PrestadorLoginResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+    role: str = "prestador"
     prestador: PrestadorAuthInfo
 
 
@@ -277,6 +323,8 @@ __all__ = [
     "Persona_UsuariaCreate",
     "Persona_UsuariaRead",
     "PrestadorCreate",
+    "PrestadorRegistroRequest",
+    "VerificarPrestadorRequest",
     "PrestadorRead",
     "AdminLoginRequest",
     "AdminLoginResponse",

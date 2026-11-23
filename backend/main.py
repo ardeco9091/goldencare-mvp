@@ -52,8 +52,10 @@ try:  # Permite ejecutar `uvicorn main:app` desde backend o importar `backend.ma
         PrestadorLoginRequest,
         PrestadorLoginResponse,
         PrestadorRead,
+        PrestadorRegistroRequest,
         ServicioCreate,
         ServicioRead,
+        VerificarPrestadorRequest,
     )
 except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
     from auth_utils import (
@@ -93,8 +95,10 @@ except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
         PrestadorLoginRequest,
         PrestadorLoginResponse,
         PrestadorRead,
+        PrestadorRegistroRequest,
         ServicioCreate,
         ServicioRead,
+        VerificarPrestadorRequest,
     )
 
 
@@ -190,7 +194,7 @@ asegurar_columnas_monetizacion()
 
 
 def asegurar_columnas_prestador_auth() -> None:
-    """Agrega email y password_hash en prestador de forma segura y asigna credenciales iniciales."""
+    """Agrega columnas de autenticación y verificación en prestador de forma segura."""
 
     inspector = inspect(engine)
     if "prestador" not in inspector.get_table_names():
@@ -198,14 +202,27 @@ def asegurar_columnas_prestador_auth() -> None:
 
     columnas_existentes = {col["name"] for col in inspector.get_columns("prestador")}
     es_postgres = engine.dialect.name == "postgresql"
+    columnas_requeridas = [
+        ("email", "VARCHAR(120)", "VARCHAR(120)"),
+        ("password_hash", "VARCHAR(255)", "VARCHAR(255)"),
+        ("dni", "VARCHAR(30)", "VARCHAR(30)"),
+        ("telefono", "VARCHAR(50)", "VARCHAR(50)"),
+        ("barrio_cobertura", "VARCHAR(120)", "VARCHAR(120)"),
+        ("experiencia", "TEXT", "TEXT"),
+        (
+            "estado_verificacion",
+            "VARCHAR(30) NOT NULL DEFAULT 'aprobado'",
+            "VARCHAR(30) NOT NULL DEFAULT 'aprobado'",
+        ),
+    ]
 
     with engine.begin() as conn:
-        for nombre_col, longitud in [("email", 120), ("password_hash", 255)]:
+        for nombre_col, tipo_pg, tipo_sq in columnas_requeridas:
             if es_postgres:
                 conn.execute(
                     text(
                         f"ALTER TABLE prestador ADD COLUMN IF NOT EXISTS "
-                        f"{nombre_col} VARCHAR({longitud})"
+                        f"{nombre_col} {tipo_pg}"
                     )
                 )
             elif nombre_col not in columnas_existentes:
@@ -213,7 +230,7 @@ def asegurar_columnas_prestador_auth() -> None:
                     conn.execute(
                         text(
                             f"ALTER TABLE prestador ADD COLUMN "
-                            f"{nombre_col} VARCHAR({longitud})"
+                            f"{nombre_col} {tipo_sq}"
                         )
                     )
                 except SQLAlchemyError:
@@ -243,6 +260,9 @@ def asegurar_columnas_prestador_auth() -> None:
                 modificados = True
             if not p.password_hash:
                 p.password_hash = hash_password(DEFAULT_PRESTADOR_PASSWORD)
+                modificados = True
+            if not p.estado_verificacion:
+                p.estado_verificacion = "aprobado"
                 modificados = True
         if modificados:
             db.commit()
@@ -315,7 +335,7 @@ def require_prestador(
             detail="Permisos insuficientes. Se requiere sesión de prestador.",
         )
     try:
-        prestador_id = UUID(str(claims.get("sub", "")))
+        prestador_id = UUID(str(claims.get("id_prestador") or claims.get("sub") or ""))
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -361,7 +381,7 @@ def login_admin(payload: AdminLoginRequest) -> AdminLoginResponse:
         )
 
     token = create_access_token(
-        subject="admin",
+        subject=admin_email,
         role="admin",
         email=admin_email,
     )
@@ -373,19 +393,70 @@ def login_admin(payload: AdminLoginRequest) -> AdminLoginResponse:
     )
 
 
+@app.post(
+    "/prestadores/registro",
+    response_model=PrestadorRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def registrar_postulante_prestador(
+    payload: PrestadorRegistroRequest,
+    db: Session = Depends(get_db),
+) -> Prestador:
+    """Autoregistro público de prestador; queda pendiente de verificación del coordinador."""
+
+    email_limpio = payload.email.strip().lower()
+    existente = db.scalars(
+        select(Prestador).where(func.lower(Prestador.email) == email_limpio)
+    ).first()
+    if existente is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe una cuenta registrada con ese correo electrónico.",
+        )
+
+    rol_combinado = f"{payload.nombre.strip()} - {payload.especialidad.strip()}"[:50]
+    experiencia_limpia = (
+        payload.experiencia.strip()
+        if payload.experiencia and payload.experiencia.strip()
+        else None
+    )
+
+    prestador = Prestador(
+        rol=rol_combinado,
+        email=email_limpio,
+        password_hash=hash_password(payload.password),
+        dni=payload.dni.strip(),
+        telefono=payload.telefono.strip(),
+        barrio_cobertura=payload.barrio_cobertura.strip(),
+        experiencia=experiencia_limpia,
+        estado_verificacion="pendiente",
+        disponibilidad=False,
+        estado="inactivo",
+    )
+    try:
+        db.add(prestador)
+        db.commit()
+        db.refresh(prestador)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pudo registrar la postulación en este momento.",
+        ) from exc
+
+    return prestador
+
+
 @app.post("/prestadores/login", response_model=PrestadorLoginResponse)
 def login_prestador(
     payload: PrestadorLoginRequest,
     db: Session = Depends(get_db),
 ) -> PrestadorLoginResponse:
-    """Autentica a un prestador activo por correo electrónico y contraseña."""
+    """Autentica a un prestador por correo y contraseña verificando su aprobación."""
 
     email_limpio = payload.email.strip().lower()
     prestador = db.scalars(
-        select(Prestador).where(
-            func.lower(Prestador.email) == email_limpio,
-            Prestador.estado == "activo",
-        )
+        select(Prestador).where(func.lower(Prestador.email) == email_limpio)
     ).first()
 
     if prestador is None or not verify_password(payload.password, prestador.password_hash):
@@ -394,21 +465,43 @@ def login_prestador(
             detail="Correo electrónico o contraseña incorrectos.",
         )
 
+    if prestador.estado_verificacion == "pendiente":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu cuenta está pendiente de verificación por el coordinador.",
+        )
+
+    if prestador.estado_verificacion == "rechazado":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu solicitud de registro fue rechazada.",
+        )
+
+    if prestador.estado_verificacion != "aprobado" or prestador.estado != "activo":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu cuenta no se encuentra habilitada para operar.",
+        )
+
     nombre, especialidad = parsear_rol_prestador(prestador.rol)
+    email_final = prestador.email or email_limpio
     token = create_access_token(
-        subject=str(prestador.id_prestador),
+        subject=email_final,
         role="prestador",
-        email=prestador.email or email_limpio,
+        email=email_final,
+        id_prestador=str(prestador.id_prestador),
     )
     return PrestadorLoginResponse(
         access_token=token,
         token_type="bearer",
+        role="prestador",
         prestador=PrestadorAuthInfo(
             id_prestador=prestador.id_prestador,
             nombre=nombre,
             especialidad=especialidad,
             rol=prestador.rol,
-            email=prestador.email or email_limpio,
+            email=email_final,
+            barrio_cobertura=prestador.barrio_cobertura,
         ),
     )
 
@@ -589,7 +682,8 @@ def actualizar_estado_servicio(
 
     if claims.get("role") == "prestador":
         id_asignado, _ = _extraer_prestador_asignado(servicio)
-        if id_asignado is None or str(id_asignado) != str(claims.get("sub")):
+        token_prestador_id = str(claims.get("id_prestador") or claims.get("sub") or "")
+        if id_asignado is None or str(id_asignado) != token_prestador_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Solo podés actualizar el estado de servicios asignados a tu cuenta.",
@@ -673,14 +767,70 @@ def _servicio_a_respuesta(servicio: Servicio) -> ServicioRead:
 @app.get("/prestadores", response_model=list[PrestadorRead], include_in_schema=False)
 @app.get("/prestadores/", response_model=list[PrestadorRead])
 def listar_prestadores(db: Session = Depends(get_db)) -> list[Prestador]:
-    """Devuelve los prestadores activos y disponibles para asignar a servicios."""
+    """Devuelve los prestadores activos y aprobados disponibles para asignar a servicios."""
 
     consulta = (
         select(Prestador)
-        .where(Prestador.estado == "activo")
+        .where(
+            Prestador.estado == "activo",
+            Prestador.estado_verificacion == "aprobado",
+        )
         .order_by(Prestador.rol.asc())
     )
     return list(db.scalars(consulta).all())
+
+
+@app.get("/prestadores/pendientes", response_model=list[PrestadorRead])
+def listar_prestadores_pendientes(
+    _admin: dict[str, Any] = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[Prestador]:
+    """Lista los postulantes a prestador pendientes de verificación por el coordinador."""
+
+    consulta = (
+        select(Prestador)
+        .where(Prestador.estado_verificacion == "pendiente")
+        .order_by(Prestador.rol.asc())
+    )
+    return list(db.scalars(consulta).all())
+
+
+@app.patch("/prestadores/{id_prestador}/verificar", response_model=PrestadorRead)
+def verificar_prestador(
+    id_prestador: UUID,
+    payload: VerificarPrestadorRequest,
+    _admin: dict[str, Any] = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Prestador:
+    """Aprueba o rechaza un postulante a prestador desde el panel del coordinador."""
+
+    prestador = db.get(Prestador, id_prestador)
+    if prestador is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prestador no encontrado.",
+        )
+
+    if payload.accion == "aprobar":
+        prestador.estado_verificacion = "aprobado"
+        prestador.estado = "activo"
+        prestador.disponibilidad = True
+    else:
+        prestador.estado_verificacion = "rechazado"
+        prestador.estado = "inactivo"
+        prestador.disponibilidad = False
+
+    try:
+        db.commit()
+        db.refresh(prestador)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pudo actualizar el estado de verificación del prestador.",
+        ) from exc
+
+    return prestador
 
 
 @app.post(
@@ -699,7 +849,7 @@ def crear_prestador(
     _admin: dict[str, Any] = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> Prestador:
-    """Registra un nuevo prestador operativo con correo y contraseña hasheada."""
+    """Registra un nuevo prestador operativo directamente como aprobado desde /admin."""
 
     email_limpio = payload.email.strip().lower()
     existente = db.scalars(
@@ -715,8 +865,19 @@ def crear_prestador(
         rol=payload.rol.strip(),
         email=email_limpio,
         password_hash=hash_password(payload.password),
-        disponibilidad=payload.disponibilidad,
-        estado=payload.estado,
+        dni=payload.dni.strip() if payload.dni and payload.dni.strip() else None,
+        telefono=payload.telefono.strip()
+        if payload.telefono and payload.telefono.strip()
+        else None,
+        barrio_cobertura=payload.barrio_cobertura.strip()
+        if payload.barrio_cobertura and payload.barrio_cobertura.strip()
+        else None,
+        experiencia=payload.experiencia.strip()
+        if payload.experiencia and payload.experiencia.strip()
+        else None,
+        estado_verificacion="aprobado",
+        disponibilidad=True,
+        estado="activo",
     )
     try:
         db.add(prestador)
