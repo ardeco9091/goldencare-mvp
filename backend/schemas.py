@@ -93,6 +93,8 @@ class PrestadorCreate(BaseModel):
     """Datos para registrar un prestador (rol almacena 'Nombre - Especialidad')."""
 
     rol: str = Field(min_length=1, max_length=50)
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=4, max_length=128)
     disponibilidad: bool = True
     estado: str = Field(default="activo", min_length=1, max_length=30)
 
@@ -104,18 +106,78 @@ class PrestadorCreate(BaseModel):
             raise ValueError("El nombre y especialidad del prestador no puede estar vacío.")
         return limpio
 
+    @field_validator("email")
+    @classmethod
+    def validar_email(cls, valor: str) -> str:
+        limpio = valor.strip().lower()
+        if "@" not in limpio or "." not in limpio.split("@")[-1]:
+            raise ValueError("Ingresá un correo electrónico válido.")
+        return limpio
 
-class PrestadorRead(PrestadorCreate):
-    """Representación de un prestador persistido."""
+
+class PrestadorRead(BaseModel):
+    """Representación de un prestador persistido (sin exponer password_hash)."""
 
     id_prestador: UUID
+    rol: str
+    email: Optional[str] = None
+    disponibilidad: bool = True
+    estado: str = "activo"
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdminLoginRequest(BaseModel):
+    """Credenciales de ingreso para el Panel del Coordinador."""
+
+    email: Optional[str] = None
+    username: Optional[str] = None
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AdminLoginResponse(BaseModel):
+    """Respuesta de autenticación exitosa para el coordinador."""
+
+    access_token: str
+    token_type: str = "bearer"
+    role: str = "admin"
+    email: str
+
+
+class PrestadorLoginRequest(BaseModel):
+    """Credenciales de ingreso para el Portal del Prestador."""
+
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class PrestadorAuthInfo(BaseModel):
+    """Perfil público del prestador autenticado."""
+
+    id_prestador: UUID
+    nombre: str
+    especialidad: str
+    rol: str
+    email: str
+
+
+class PrestadorLoginResponse(BaseModel):
+    """Respuesta de autenticación exitosa para un prestador."""
+
+    access_token: str
+    token_type: str = "bearer"
+    prestador: PrestadorAuthInfo
 
 
 class AsignarPrestadorRequest(BaseModel):
     """Datos para asignar un prestador a un servicio."""
 
     id_prestador: UUID
+
+
+class AceptarPrestadorRequest(BaseModel):
+    """Cuerpo opcional al aceptar un servicio (el ID se valida con el token Bearer)."""
+
+    id_prestador: Optional[UUID] = None
 
 
 class EncuestaCreate(BaseModel):
@@ -216,7 +278,13 @@ __all__ = [
     "Persona_UsuariaRead",
     "PrestadorCreate",
     "PrestadorRead",
+    "AdminLoginRequest",
+    "AdminLoginResponse",
+    "PrestadorLoginRequest",
+    "PrestadorAuthInfo",
+    "PrestadorLoginResponse",
     "AsignarPrestadorRequest",
+    "AceptarPrestadorRequest",
     "EncuestaCreate",
     "EncuestaRead",
     "PedidoPublicoCreate",

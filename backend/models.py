@@ -112,6 +112,8 @@ class Prestador(Base):
 
     id_prestador: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     rol: Mapped[str] = mapped_column(String(50), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, unique=True, index=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     disponibilidad: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     estado: Mapped[str] = mapped_column(String(30), nullable=False, default="activo")
 

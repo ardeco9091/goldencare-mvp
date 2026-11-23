@@ -58,6 +58,7 @@ type Usuario = {
 type Prestador = {
   id_prestador: string;
   rol: string;
+  email?: string | null;
   disponibilidad: boolean;
   estado: string;
 };
@@ -92,6 +93,8 @@ type NewClientForm = {
 
 type NewProviderForm = {
   rol: string;
+  email: string;
+  password: string;
 };
 
 const initialForm: NewServiceForm = {
@@ -111,6 +114,8 @@ const initialClientForm: NewClientForm = {
 
 const initialProviderForm: NewProviderForm = {
   rol: "",
+  email: "",
+  password: "",
 };
 
 const initialMetrics: Metricas = {
@@ -219,6 +224,15 @@ function isServiceUrgent(service: Servicio, nowMs: number | null): boolean {
 }
 
 export default function AdminPage() {
+  // Estado de autenticación del coordinador
+  const [authChecked, setAuthChecked] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const [loginEmail, setLoginEmail] = useState<string>("");
+  const [loginPassword, setLoginPassword] = useState<string>("");
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
   const [services, setServices] = useState<Servicio[]>([]);
   const [users, setUsers] = useState<Usuario[]>([]);
   const [providers, setProviders] = useState<Prestador[]>([]);
@@ -374,8 +388,94 @@ export default function AdminPage() {
     setProviders(data);
   }, []);
 
-  // Carga inicial
+  // Restaurar sesión del coordinador al montar
   useEffect(() => {
+    try {
+      const savedToken = window.sessionStorage.getItem("goldencare_admin_token");
+      const savedEmail = window.sessionStorage.getItem("goldencare_admin_email");
+      if (savedToken) {
+        setAdminToken(savedToken);
+        setAdminEmail(savedEmail || "admin@goldencare.com");
+      }
+    } catch {
+      // Ignorar errores de sessionStorage
+    } finally {
+      setAuthChecked(true);
+    }
+  }, []);
+
+  function handleAdminLogout(mensajeError?: string) {
+    try {
+      window.sessionStorage.removeItem("goldencare_admin_token");
+      window.sessionStorage.removeItem("goldencare_admin_email");
+    } catch {
+      // Ignorar
+    }
+    setAdminToken(null);
+    setAdminEmail(null);
+    setLoginPassword("");
+    if (mensajeError) {
+      setLoginError(mensajeError);
+    }
+  }
+
+  async function handleAdminLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginError(null);
+
+    if (!loginEmail.trim() || !loginPassword) {
+      setLoginError("Ingresá tu correo electrónico y contraseña.");
+      return;
+    }
+
+    setIsLoggingIn(true);
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: loginEmail.trim(),
+          password: loginPassword,
+        }),
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          body && typeof body.detail === "string"
+            ? body.detail
+            : "Credenciales inválidas.";
+        throw new Error(detail);
+      }
+
+      const token = String(body.access_token || "");
+      const email = String(body.email || loginEmail.trim());
+      try {
+        window.sessionStorage.setItem("goldencare_admin_token", token);
+        window.sessionStorage.setItem("goldencare_admin_email", email);
+      } catch {
+        // Ignorar
+      }
+      setAdminToken(token);
+      setAdminEmail(email);
+      setLoginPassword("");
+      setIsLoading(true);
+    } catch (err) {
+      setLoginError(
+        err instanceof Error
+          ? err.message
+          : "No se pudo iniciar sesión en el panel.",
+      );
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
+  // Carga inicial (solo cuando el coordinador está autenticado)
+  useEffect(() => {
+    if (!adminToken) {
+      return;
+    }
     const controller = new AbortController();
     const baseUrl = getApiBaseUrl();
 
@@ -445,11 +545,12 @@ export default function AdminPage() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [adminToken]);
 
   // Auto-refresco silencioso cada 4 segundos y al recuperar visibilidad de la pestaña
   useEffect(() => {
     if (
+      !adminToken ||
       isModalOpen ||
       isClientModalOpen ||
       isProviderModalOpen ||
@@ -478,6 +579,7 @@ export default function AdminPage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [
+    adminToken,
     isModalOpen,
     isClientModalOpen,
     isProviderModalOpen,
@@ -740,15 +842,24 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${getApiBaseUrl()}/prestadores/`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+        },
         body: JSON.stringify({
           rol: providerFormData.rol.trim(),
+          email: providerFormData.email.trim().toLowerCase(),
+          password: providerFormData.password,
           disponibilidad: true,
           estado: "activo",
         }),
       });
 
       const responseBody = await response.json().catch(() => null);
+      if (response.status === 401) {
+        handleAdminLogout("Tu sesión expiró. Volvé a iniciar sesión.");
+        return;
+      }
       if (!response.ok) {
         const detail =
           responseBody && typeof responseBody.detail === "string"
@@ -819,12 +930,19 @@ export default function AdminPage() {
         `${getApiBaseUrl()}/servicios/${encodeURIComponent(idServicio)}/estado`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+          },
           body: JSON.stringify({ estado }),
         },
       );
 
       const responseBody = await response.json().catch(() => null);
+      if (response.status === 401) {
+        handleAdminLogout("Tu sesión expiró. Volvé a iniciar sesión.");
+        return;
+      }
       if (!response.ok) {
         const detail =
           responseBody && typeof responseBody.detail === "string"
@@ -916,6 +1034,107 @@ export default function AdminPage() {
     statusFilter !== "todos" ||
     typeFilter !== "todos";
 
+  if (!authChecked) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-300">
+        <p className="text-sm font-medium">Verificando sesión de coordinador...</p>
+      </main>
+    );
+  }
+
+  if (!adminToken) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-10 text-slate-100">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900 p-7 shadow-2xl sm:p-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400 text-2xl font-extrabold text-slate-950">
+              G
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">
+                GoldenCare · San Pedro de Jujuy
+              </p>
+              <h1 className="text-xl font-bold text-white">
+                Acceso Coordinadores
+              </h1>
+            </div>
+          </div>
+
+          <p className="mt-4 text-sm text-slate-400">
+            Ingresá con tu correo electrónico y contraseña para administrar
+            solicitudes, prestadores y métricas financieras.
+          </p>
+
+          <form onSubmit={handleAdminLogin} noValidate className="mt-6 space-y-4">
+            <div>
+              <label
+                htmlFor="admin-login-email"
+                className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
+              >
+                Correo Electrónico
+              </label>
+              <input
+                id="admin-login-email"
+                type="email"
+                autoComplete="email"
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
+                placeholder="admin@goldencare.com"
+                required
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="admin-login-password"
+                className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
+              >
+                Contraseña
+              </label>
+              <input
+                id="admin-login-password"
+                type="password"
+                autoComplete="current-password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                placeholder="••••••••"
+                required
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+              />
+            </div>
+
+            {loginError && (
+              <div
+                role="alert"
+                className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs font-semibold text-rose-200"
+              >
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="mt-2 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-cyan-400 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-sm transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoggingIn ? "Verificando..." : "Ingresar al Panel"}
+            </button>
+          </form>
+
+          <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-4 text-xs text-slate-400">
+            <Link href="/" className="transition hover:text-cyan-300">
+              ← Portal Público
+            </Link>
+            <Link href="/prestador" className="transition hover:text-cyan-300">
+              Portal Prestadores →
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen w-full overflow-x-hidden bg-slate-100 text-slate-900">
       <div className="mx-auto flex min-h-screen max-w-[1600px]">
@@ -973,12 +1192,18 @@ export default function AdminPage() {
 
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
-                Estado del sistema
+                Sesión activa
               </p>
-              <div className="mt-3 flex items-center gap-2 text-sm text-slate-200">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.12)]" />
-                API operativa
-              </div>
+              <p className="mt-2 truncate text-xs font-medium text-slate-200">
+                {adminEmail || "admin@goldencare.com"}
+              </p>
+              <button
+                type="button"
+                onClick={() => handleAdminLogout()}
+                className="mt-3 w-full rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-200 transition hover:bg-rose-500/20"
+              >
+                Cerrar sesión
+              </button>
             </div>
           </div>
         </aside>
@@ -1012,6 +1237,13 @@ export default function AdminPage() {
                   </span>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => handleAdminLogout()}
+                className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-100 lg:hidden"
+              >
+                Cerrar sesión
+              </button>
             </div>
           </header>
 
@@ -1420,6 +1652,7 @@ export default function AdminPage() {
                                   value={provider.id_prestador}
                                 >
                                   {provider.rol}
+                                  {provider.email ? ` (${provider.email})` : ""}
                                 </option>
                               ))}
                             </select>
@@ -1559,6 +1792,48 @@ export default function AdminPage() {
                     </article>
                   );
                 })}
+              </div>
+            )}
+          </section>
+
+          {/* Directorio de Prestadores con sus correos de acceso */}
+          <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-950">
+                  Equipo de Prestadores Activos ({providers.length})
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Correos electrónicos habilitados para ingresar al Portal del Prestador (/prestador).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={openProviderModal}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                + Nuevo Prestador
+              </button>
+            </div>
+            {providers.length === 0 ? (
+              <p className="mt-4 text-xs text-slate-500">
+                Todavía no hay prestadores activos registrados.
+              </p>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {providers.map((provider) => (
+                  <div
+                    key={provider.id_prestador}
+                    className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3"
+                  >
+                    <p className="text-sm font-bold text-slate-900">
+                      {provider.rol}
+                    </p>
+                    <p className="mt-1 break-all font-mono text-xs text-cyan-800">
+                      {provider.email || "Sin correo asignado"}
+                    </p>
+                  </div>
+                ))}
               </div>
             )}
           </section>
@@ -1931,7 +2206,10 @@ export default function AdminPage() {
                   maxLength={50}
                   value={providerFormData.rol}
                   onChange={(event) =>
-                    setProviderFormData({ rol: event.target.value })
+                    setProviderFormData((current) => ({
+                      ...current,
+                      rol: event.target.value,
+                    }))
                   }
                   placeholder="Ej. Laura Méndez - Acompañamiento"
                   required
@@ -1940,6 +2218,51 @@ export default function AdminPage() {
                 <p className="mt-1.5 text-xs text-slate-500">
                   Formato sugerido: Nombre y Apellido - Especialidad (máx. 50 caracteres).
                 </p>
+              </div>
+
+              <div>
+                <label htmlFor="providerEmail" className="mb-2 block text-sm font-semibold text-slate-700">
+                  Correo Electrónico de acceso <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id="providerEmail"
+                  name="providerEmail"
+                  type="email"
+                  maxLength={120}
+                  value={providerFormData.email}
+                  onChange={(event) =>
+                    setProviderFormData((current) => ({
+                      ...current,
+                      email: event.target.value,
+                    }))
+                  }
+                  placeholder="Ej. maria.perez@goldencare.com"
+                  required
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="providerPassword" className="mb-2 block text-sm font-semibold text-slate-700">
+                  Contraseña inicial <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id="providerPassword"
+                  name="providerPassword"
+                  type="password"
+                  minLength={4}
+                  maxLength={128}
+                  value={providerFormData.password}
+                  onChange={(event) =>
+                    setProviderFormData((current) => ({
+                      ...current,
+                      password: event.target.value,
+                    }))
+                  }
+                  placeholder="Mínimo 4 caracteres"
+                  required
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
+                />
               </div>
 
               {providerFormError && (

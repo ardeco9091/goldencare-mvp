@@ -24,6 +24,7 @@ goldencare-mvp/
 ├── AGENTS.md                        # Reglas y convenciones técnicas del proyecto
 ├── README.md                        # Documentación general, arquitectura y despliegue
 ├── backend/                         # API REST con FastAPI + SQLAlchemy 2.0 + Pydantic v2
+│   ├── auth_utils.py                # Hash PBKDF2-SHA256 y tokens firmados HMAC-SHA256
 │   ├── main.py                      # Endpoints, migración automática de columnas y lógica operativa
 │   ├── models.py                    # Modelos relacionales (Persona_Usuaria, Servicio, Prestador, Asignacion, Encuesta...)
 │   ├── schemas.py                   # Validación de entrada/salida con Pydantic v2
@@ -79,13 +80,15 @@ goldencare-mvp/
   - Estado `completado`: habilita la **encuesta de satisfacción (1 a 5 estrellas + comentario opcional)**.
 
 ### 2. Portal del Prestador (`/prestador`)
+- **Acceso autenticado por correo y contraseña:** pantalla de inicio de sesión (`POST /prestadores/login`) con sesión en `sessionStorage`, token `Bearer` firmado HMAC-SHA256 y botón **"Cerrar sesión"**.
 - **Interfaz mobile-first:** pensada para celulares de prestadores en terreno con sincronización automática cada 4 segundos.
-- **Perfil y Ganancias:** selector de perfil activo (`GET /prestadores/`), tarjeta de **Ganancias acumuladas (85%)** sobre servicios completados y monto **En curso / por cobrar**.
-- **Solicitudes Disponibles (estilo Uber):** lista en tiempo real de pedidos en estado `solicitado` con badge de urgencia, barrio, dirección, ganancia neta (85%) y botón **"Aceptar Pedido"** (`POST /servicios/{id_servicio}/aceptar-prestador`, con control de concurrencia `409 Conflict`).
-- **Mis Servicios:** gestión en un toque para avanzar el ciclo operativo (`asignado` → `en curso` → `completado`) e historial completado con valoraciones.
+- **Perfil y Ganancias exclusivas:** muestra exclusivamente las **Ganancias acumuladas (85%)** sobre servicios completados y el monto **En curso / por cobrar** del prestador autenticado.
+- **Solicitudes Disponibles (estilo Uber):** lista en tiempo real de pedidos en estado `solicitado` con badge de urgencia, barrio, dirección, ganancia neta (85%) y botón **"Aceptar Pedido"** (`POST /servicios/{id_servicio}/aceptar-prestador`, protegido por token Bearer y con control de concurrencia `409 Conflict`).
+- **Mis Servicios:** gestión en un toque para avanzar el ciclo operativo (`asignado` → `en curso` → `completado`) verificando que el servicio pertenezca al prestador autenticado, más historial completado con valoraciones.
 
 ### 3. Panel del Coordinador (`/admin`)
-- **Acceso operativo restringido:** acceso directo por ruta `/admin` (preparado para autenticación administrativa mediante credenciales de entorno `ADMIN_USER` / `ADMIN_PASSWORD` y token firmado HMAC-SHA256).
+- **Acceso autenticado con Correo y Contraseña:** login mediante `POST /auth/login` (acepta correo `ADMIN_EMAIL` o usuario legacy `ADMIN_USER`) y token firmado HMAC-SHA256 guardado en `sessionStorage`, con botón **"Cerrar sesión"**.
+- **Alta de cuentas de prestadores:** el modal **Nuevo Prestador** solicita Nombre/Especialidad, **Correo Electrónico** y **Contraseña inicial** (almacenada como hash PBKDF2-SHA256) y el panel incluye un directorio visible con los correos de acceso de cada prestador activo.
 - **Tarjetas completas sin scroll horizontal:** lista vertical de tarjetas independientes con borde izquierdo por estado (`solicitado` ámbar, `asignado` azul, `en curso` índigo, `completado` esmeralda, `cancelado` rojo), cabecera con ID/estado/urgencia/fecha y cuerpo en 3 columnas responsivas (Cliente y Ubicación completa sin truncar, Servicio y desglose de Tarifas, Prestador y controles directos).
 - **Pestañas y filtros inteligentes:** vistas de **Servicios Activos**, **Historial Completados** (con estrellas y comentario de encuesta) y **Todas**; búsqueda instantánea, filtros por estado/tipo y ordenamiento por **urgencia horaria (próximas 24 h)**.
 - **Métricas Operativas y Financieras:** Total de Usuarios, Servicios Pendientes, Tasa de Cumplimiento, Satisfacción Promedio (`★`) y **Comisiones GoldenCare (15%)** con ingresos brutos y comisiones proyectadas en curso.
@@ -99,6 +102,8 @@ En producción se consumen de forma transparente a través del proxy `/api/*` de
 
 | Método | Endpoint | Descripción |
 |---|---|---|
+| `POST` | `/auth/login` | Autentica al coordinador con correo (`ADMIN_EMAIL` o usuario legacy) y contraseña; devuelve token HMAC-SHA256 con `role: "admin"` |
+| `POST` | `/prestadores/login` | Autentica a un prestador activo por correo y contraseña (PBKDF2); devuelve token HMAC-SHA256 y perfil del prestador |
 | `POST` | `/pedidos/publico` | Crea un pedido desde `/`, calcula tarifa/comisión/neto, crea o reutiliza el usuario y devuelve código corto de 8 caracteres |
 | `GET` | `/pedidos/consultar/{codigo_o_contacto}` | Consulta pedidos por código de 8 caracteres o coincidencia parcial en nombre/teléfono |
 | `GET` | `/servicios/` | Lista todos los servicios enriquecidos (soporta filtros `?estado=` y `?id_prestador=`) |
@@ -120,9 +125,17 @@ En producción se consumen de forma transparente a través del proxy `/api/*` de
 |---|---|---|---|
 | `DATABASE_URL` | Backend (Render) | Cadena de conexión PostgreSQL de Supabase (se normaliza automáticamente a `postgresql+psycopg://`). En local usa SQLite por defecto | `postgresql://postgres:***@aws-0-sa-east-1.pooler.supabase.com:6543/postgres` |
 | `PYTHON_VERSION` | Backend (Render) | Versión fija de Python para compatibilidad óptima con wheels binarios | `3.12.8` |
-| `ADMIN_USER` | Backend (Render) | Usuario administrativo para autenticación del coordinador | `admin` |
-| `ADMIN_PASSWORD` | Backend (Render) | Contraseña administrativa para firma/validación de sesión HMAC-SHA256 | `********` |
+| `ADMIN_EMAIL` | Backend (Render) | Correo administrativo para login en `/admin` (por defecto `admin@goldencare.com`) | `admin@goldencare.com` |
+| `ADMIN_USER` | Backend (Render) | Usuario legacy alternativo aceptado en `/auth/login` | `admin` |
+| `ADMIN_PASSWORD` | Backend (Render) | Contraseña administrativa (por defecto `goldencare2026`) y clave base para firma HMAC-SHA256 | `goldencare2026` |
 | `NEXT_PUBLIC_API_URL` | Frontend (Vercel) | URL base del backend usada por `next.config.ts` en el rewrite `/api/:path*` | `https://goldencare-backend-9cb3.onrender.com` |
+
+### Credenciales Iniciales de Prueba
+- **Coordinador (`/admin`):** `admin@goldencare.com` / `goldencare2026` (configurables vía `ADMIN_EMAIL` y `ADMIN_PASSWORD`).
+- **Prestadores iniciales (`/prestador`, contraseña `prestador123`):**
+  - `laura.mendez@goldencare.com` (Laura Méndez - Acompañamiento)
+  - `roberto.gomez@goldencare.com` (Roberto Gómez - Traslados)
+  - `carolina.vega@goldencare.com` (Carolina Vega - Mandados y Farmacia)
 
 ---
 

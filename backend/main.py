@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import hmac
 import os
 import re
-from typing import Generator
+from typing import Any, Generator
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 try:  # Permite ejecutar `uvicorn main:app` desde backend o importar `backend.main`.
+    from .auth_utils import (
+        DEFAULT_PRESTADOR_PASSWORD,
+        create_access_token,
+        hash_password,
+        normalizar_email_prestador,
+        parsear_rol_prestador,
+        verify_access_token,
+        verify_password,
+    )
     from .models import (
         Asignacion,
         Base,
@@ -24,6 +34,9 @@ try:  # Permite ejecutar `uvicorn main:app` desde backend o importar `backend.ma
         Servicio,
     )
     from .schemas import (
+        AceptarPrestadorRequest,
+        AdminLoginRequest,
+        AdminLoginResponse,
         AsignarPrestadorRequest,
         EncuestaCreate,
         EstadoServicio,
@@ -34,12 +47,24 @@ try:  # Permite ejecutar `uvicorn main:app` desde backend o importar `backend.ma
         PedidoPublicoRead,
         PersonaUsuariaCreate,
         PersonaUsuariaRead,
+        PrestadorAuthInfo,
         PrestadorCreate,
+        PrestadorLoginRequest,
+        PrestadorLoginResponse,
         PrestadorRead,
         ServicioCreate,
         ServicioRead,
     )
 except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
+    from auth_utils import (
+        DEFAULT_PRESTADOR_PASSWORD,
+        create_access_token,
+        hash_password,
+        normalizar_email_prestador,
+        parsear_rol_prestador,
+        verify_access_token,
+        verify_password,
+    )
     from models import (
         Asignacion,
         Base,
@@ -50,6 +75,9 @@ except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
         Servicio,
     )
     from schemas import (
+        AceptarPrestadorRequest,
+        AdminLoginRequest,
+        AdminLoginResponse,
         AsignarPrestadorRequest,
         EncuestaCreate,
         EstadoServicio,
@@ -60,7 +88,10 @@ except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
         PedidoPublicoRead,
         PersonaUsuariaCreate,
         PersonaUsuariaRead,
+        PrestadorAuthInfo,
         PrestadorCreate,
+        PrestadorLoginRequest,
+        PrestadorLoginResponse,
         PrestadorRead,
         ServicioCreate,
         ServicioRead,
@@ -157,6 +188,68 @@ def asegurar_columnas_monetizacion() -> None:
 
 asegurar_columnas_monetizacion()
 
+
+def asegurar_columnas_prestador_auth() -> None:
+    """Agrega email y password_hash en prestador de forma segura y asigna credenciales iniciales."""
+
+    inspector = inspect(engine)
+    if "prestador" not in inspector.get_table_names():
+        return
+
+    columnas_existentes = {col["name"] for col in inspector.get_columns("prestador")}
+    es_postgres = engine.dialect.name == "postgresql"
+
+    with engine.begin() as conn:
+        for nombre_col, longitud in [("email", 120), ("password_hash", 255)]:
+            if es_postgres:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE prestador ADD COLUMN IF NOT EXISTS "
+                        f"{nombre_col} VARCHAR({longitud})"
+                    )
+                )
+            elif nombre_col not in columnas_existentes:
+                try:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE prestador ADD COLUMN "
+                            f"{nombre_col} VARCHAR({longitud})"
+                        )
+                    )
+                except SQLAlchemyError:
+                    pass
+
+        if es_postgres:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_prestador_email "
+                    "ON prestador (email)"
+                )
+            )
+
+    with SessionLocal() as db:
+        prestadores = list(db.scalars(select(Prestador)).all())
+        emails_usados = {
+            p.email.strip().lower()
+            for p in prestadores
+            if p.email and p.email.strip()
+        }
+        modificados = False
+        for p in prestadores:
+            if not p.email or not p.email.strip():
+                nuevo_email = normalizar_email_prestador(p.rol, emails_usados)
+                p.email = nuevo_email
+                emails_usados.add(nuevo_email)
+                modificados = True
+            if not p.password_hash:
+                p.password_hash = hash_password(DEFAULT_PRESTADOR_PASSWORD)
+                modificados = True
+        if modificados:
+            db.commit()
+
+
+asegurar_columnas_prestador_auth()
+
 app = FastAPI(title="GoldenCare API", version="0.1.0")
 
 app.add_middleware(
@@ -176,6 +269,148 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def _extraer_token_bearer(authorization: str | None) -> dict[str, Any]:
+    """Extrae y valida el token Bearer HMAC-SHA256 del encabezado Authorization."""
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Se requiere iniciar sesión para realizar esta acción.",
+        )
+    token = authorization[7:].strip()
+    claims = verify_access_token(token)
+    if claims is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión inválida o expirada. Volvé a iniciar sesión.",
+        )
+    return claims
+
+
+def require_admin(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Exige un token válido con rol 'admin'."""
+
+    claims = _extraer_token_bearer(authorization)
+    if claims.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permisos insuficientes. Se requiere acceso de coordinador.",
+        )
+    return claims
+
+
+def require_prestador(
+    authorization: str | None = Header(default=None),
+) -> tuple[UUID, dict[str, Any]]:
+    """Exige un token válido con rol 'prestador' y devuelve su UUID y claims."""
+
+    claims = _extraer_token_bearer(authorization)
+    if claims.get("role") != "prestador":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permisos insuficientes. Se requiere sesión de prestador.",
+        )
+    try:
+        prestador_id = UUID(str(claims.get("sub", "")))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de prestador inválido.",
+        ) from exc
+    return prestador_id, claims
+
+
+def require_admin_or_prestador(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Permite acceso autenticado tanto a coordinadores ('admin') como a prestadores."""
+
+    claims = _extraer_token_bearer(authorization)
+    if claims.get("role") not in ("admin", "prestador"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Rol de sesión no autorizado.",
+        )
+    return claims
+
+
+@app.post("/auth/login", response_model=AdminLoginResponse)
+def login_admin(payload: AdminLoginRequest) -> AdminLoginResponse:
+    """Autentica al coordinador con correo electrónico (o usuario legacy) y contraseña."""
+
+    identificador = (payload.email or payload.username or "").strip().lower()
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@goldencare.com").strip().lower()
+    admin_user = os.getenv("ADMIN_USER", "admin").strip().lower()
+    admin_password = os.getenv("ADMIN_PASSWORD", "goldencare2026")
+
+    identificadores_validos = {admin_email, admin_user, "admin"}
+    if not identificador or identificador not in identificadores_validos:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Correo o contraseña incorrectos.",
+        )
+
+    if not hmac.compare_digest(payload.password, admin_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Correo o contraseña incorrectos.",
+        )
+
+    token = create_access_token(
+        subject="admin",
+        role="admin",
+        email=admin_email,
+    )
+    return AdminLoginResponse(
+        access_token=token,
+        token_type="bearer",
+        role="admin",
+        email=admin_email,
+    )
+
+
+@app.post("/prestadores/login", response_model=PrestadorLoginResponse)
+def login_prestador(
+    payload: PrestadorLoginRequest,
+    db: Session = Depends(get_db),
+) -> PrestadorLoginResponse:
+    """Autentica a un prestador activo por correo electrónico y contraseña."""
+
+    email_limpio = payload.email.strip().lower()
+    prestador = db.scalars(
+        select(Prestador).where(
+            func.lower(Prestador.email) == email_limpio,
+            Prestador.estado == "activo",
+        )
+    ).first()
+
+    if prestador is None or not verify_password(payload.password, prestador.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Correo electrónico o contraseña incorrectos.",
+        )
+
+    nombre, especialidad = parsear_rol_prestador(prestador.rol)
+    token = create_access_token(
+        subject=str(prestador.id_prestador),
+        role="prestador",
+        email=prestador.email or email_limpio,
+    )
+    return PrestadorLoginResponse(
+        access_token=token,
+        token_type="bearer",
+        prestador=PrestadorAuthInfo(
+            id_prestador=prestador.id_prestador,
+            nombre=nombre,
+            especialidad=especialidad,
+            rol=prestador.rol,
+            email=prestador.email or email_limpio,
+        ),
+    )
 
 
 def _usuario_a_respuesta(usuario: Persona_Usuaria) -> PersonaUsuariaRead:
@@ -329,9 +564,10 @@ def listar_servicios(
 def actualizar_estado_servicio(
     id_servicio: UUID,
     payload: EstadoServicioUpdate,
+    claims: dict[str, Any] = Depends(require_admin_or_prestador),
     db: Session = Depends(get_db),
 ) -> ServicioRead:
-    """Actualiza el estado operativo de un servicio existente."""
+    """Actualiza el estado operativo de un servicio existente (admin o prestador asignado)."""
 
     consulta_servicio = (
         select(Servicio)
@@ -350,6 +586,19 @@ def actualizar_estado_servicio(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Servicio no encontrado.",
         )
+
+    if claims.get("role") == "prestador":
+        id_asignado, _ = _extraer_prestador_asignado(servicio)
+        if id_asignado is None or str(id_asignado) != str(claims.get("sub")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo podés actualizar el estado de servicios asignados a tu cuenta.",
+            )
+        if payload.estado not in (EstadoServicio.en_curso, EstadoServicio.completado):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Como prestador solo podés avanzar servicios a 'en curso' o 'completado'.",
+            )
 
     servicio.estado = payload.estado.value
     try:
@@ -447,12 +696,25 @@ def listar_prestadores(db: Session = Depends(get_db)) -> list[Prestador]:
 )
 def crear_prestador(
     payload: PrestadorCreate,
+    _admin: dict[str, Any] = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> Prestador:
-    """Registra un nuevo prestador operativo."""
+    """Registra un nuevo prestador operativo con correo y contraseña hasheada."""
+
+    email_limpio = payload.email.strip().lower()
+    existente = db.scalars(
+        select(Prestador).where(func.lower(Prestador.email) == email_limpio)
+    ).first()
+    if existente is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe un prestador registrado con ese correo electrónico.",
+        )
 
     prestador = Prestador(
         rol=payload.rol.strip(),
+        email=email_limpio,
+        password_hash=hash_password(payload.password),
         disponibilidad=payload.disponibilidad,
         estado=payload.estado,
     )
@@ -533,10 +795,19 @@ def asignar_prestador_servicio(
 @app.post("/servicios/{id_servicio}/aceptar-prestador", response_model=ServicioRead)
 def aceptar_servicio_prestador(
     id_servicio: UUID,
-    payload: AsignarPrestadorRequest,
+    payload: AceptarPrestadorRequest | None = None,
+    prestador_auth: tuple[UUID, dict[str, Any]] = Depends(require_prestador),
     db: Session = Depends(get_db),
 ) -> ServicioRead:
-    """Permite que un prestador tome directamente un servicio en estado 'solicitado' (flujo tipo Uber)."""
+    """Permite que un prestador autenticado tome un servicio en estado 'solicitado' (flujo tipo Uber)."""
+
+    prestador_id_token, _claims = prestador_auth
+    if payload is not None and payload.id_prestador is not None:
+        if payload.id_prestador != prestador_id_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo podés aceptar pedidos con tu propia cuenta de prestador.",
+            )
 
     consulta_servicio = (
         select(Servicio)
@@ -562,11 +833,11 @@ def aceptar_servicio_prestador(
             detail="Esta solicitud ya fue aceptada por otro prestador o no se encuentra disponible.",
         )
 
-    prestador = db.get(Prestador, payload.id_prestador)
-    if prestador is None:
+    prestador = db.get(Prestador, prestador_id_token)
+    if prestador is None or prestador.estado != "activo":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Prestador no encontrado.",
+            detail="Prestador no encontrado o inactivo.",
         )
 
     try:

@@ -18,6 +18,11 @@ from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 try:  # Permite ejecutar `python seed.py` o importar `backend.seed`.
+    from .auth_utils import (
+        DEFAULT_PRESTADOR_PASSWORD,
+        hash_password,
+        normalizar_email_prestador,
+    )
     from .models import (
         Asignacion,
         Base,
@@ -28,6 +33,11 @@ try:  # Permite ejecutar `python seed.py` o importar `backend.seed`.
         Servicio,
     )
 except ImportError:  # pragma: no cover - ruta usada por ejecución directa.
+    from auth_utils import (
+        DEFAULT_PRESTADOR_PASSWORD,
+        hash_password,
+        normalizar_email_prestador,
+    )
     from models import (
         Asignacion,
         Base,
@@ -142,11 +152,36 @@ def asegurar_columnas_monetizacion() -> None:
                 )
 
 
+def asegurar_columnas_prestador_auth() -> None:
+    inspector = inspect(engine)
+    if "prestador" not in inspector.get_table_names():
+        return
+    existentes = {col["name"] for col in inspector.get_columns("prestador")}
+    es_pg = engine.dialect.name == "postgresql"
+    with engine.begin() as conn:
+        for col, longitud in [("email", 120), ("password_hash", 255)]:
+            if es_pg:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE prestador ADD COLUMN IF NOT EXISTS "
+                        f"{col} VARCHAR({longitud})"
+                    )
+                )
+            elif col not in existentes:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE prestador ADD COLUMN "
+                        f"{col} VARCHAR({longitud})"
+                    )
+                )
+
+
 def seed() -> None:
     """Crea las tablas necesarias y carga el dataset reproducible de San Pedro de Jujuy."""
 
     Base.metadata.create_all(bind=engine)
     asegurar_columnas_monetizacion()
+    asegurar_columnas_prestador_auth()
     now = datetime.now().astimezone().replace(second=0, microsecond=0)
 
     users = {
@@ -180,19 +215,26 @@ def seed() -> None:
         },
     }
 
+    default_hash = hash_password(DEFAULT_PRESTADOR_PASSWORD)
     providers = {
         PRESTADOR_IDS["laura"]: {
             "rol": "Laura Méndez - Acompañamiento",
+            "email": "laura.mendez@goldencare.com",
+            "password_hash": default_hash,
             "disponibilidad": True,
             "estado": "activo",
         },
         PRESTADOR_IDS["roberto"]: {
             "rol": "Roberto Gómez - Traslados",
+            "email": "roberto.gomez@goldencare.com",
+            "password_hash": default_hash,
             "disponibilidad": True,
             "estado": "activo",
         },
         PRESTADOR_IDS["carolina"]: {
             "rol": "Carolina Vega - Mandados y Farmacia",
+            "email": "carolina.vega@goldencare.com",
+            "password_hash": default_hash,
             "disponibilidad": True,
             "estado": "activo",
         },
@@ -399,11 +441,30 @@ def seed() -> None:
                     encuesta_existente.valoracion = survey_data["valoracion"]
                     encuesta_existente.comentario = survey_data["comentario"]
 
+        # Backfill de credenciales para cualquier prestador previo sin email o password_hash
+        todos_prestadores = list(session.scalars(select(Prestador)).all())
+        emails_usados = {
+            p.email.strip().lower()
+            for p in todos_prestadores
+            if p.email and p.email.strip()
+        }
+        for p in todos_prestadores:
+            if not p.email or not p.email.strip():
+                nuevo_email = normalizar_email_prestador(p.rol, emails_usados)
+                p.email = nuevo_email
+                emails_usados.add(nuevo_email)
+            if not p.password_hash:
+                p.password_hash = hash_password(DEFAULT_PRESTADOR_PASSWORD)
+
         session.commit()
 
     print(
         "Dataset de San Pedro de Jujuy sincronizado con éxito: "
-        "4 personas usuarias, 3 prestadores activos, 6 servicios y 2 encuestas."
+        "4 personas usuarias, 3 prestadores activos, 6 servicios y 2 encuestas.\n"
+        "Credenciales de prueba prestadores (clave: prestador123):\n"
+        "  - laura.mendez@goldencare.com\n"
+        "  - roberto.gomez@goldencare.com\n"
+        "  - carolina.vega@goldencare.com"
     )
 
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   formatearMonedaARS,
   getApiBaseUrl,
@@ -15,11 +16,12 @@ type EstadoServicio =
   | "completado"
   | "cancelado";
 
-type Prestador = {
+type PrestadorSesion = {
   id_prestador: string;
+  nombre: string;
+  especialidad: string;
   rol: string;
-  disponibilidad: boolean;
-  estado: string;
+  email: string;
 };
 
 type Servicio = {
@@ -38,6 +40,9 @@ type Servicio = {
   valoracion?: number | null;
   comentario_encuesta?: string | null;
 };
+
+const STORAGE_TOKEN_KEY = "goldencare_prestador_token";
+const STORAGE_INFO_KEY = "goldencare_prestador_info";
 
 function formatearFechaHora(valor: string): string {
   try {
@@ -96,8 +101,16 @@ function obtenerMontos(servicio: Servicio) {
 }
 
 export default function PrestadorPortalPage() {
-  const [providers, setProviders] = useState<Prestador[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+  // Autenticación del prestador
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [prestador, setPrestador] = useState<PrestadorSesion | null>(null);
+  const [loginEmail, setLoginEmail] = useState<string>("");
+  const [loginPassword, setLoginPassword] = useState<string>("");
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Estado operativo
   const [services, setServices] = useState<Servicio[]>([]);
   const [activeTab, setActiveTab] = useState<"disponibles" | "en_curso">(
     "disponibles",
@@ -112,43 +125,113 @@ export default function PrestadorPortalPage() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number | null>(null);
 
+  // Restaurar sesión desde sessionStorage
+  useEffect(() => {
+    try {
+      const savedToken = window.sessionStorage.getItem(STORAGE_TOKEN_KEY);
+      const savedInfoRaw = window.sessionStorage.getItem(STORAGE_INFO_KEY);
+      if (savedToken && savedInfoRaw) {
+        const parsed = JSON.parse(savedInfoRaw) as PrestadorSesion;
+        if (parsed && parsed.id_prestador) {
+          setToken(savedToken);
+          setPrestador(parsed);
+        }
+      }
+    } catch {
+      // Ignorar errores de sessionStorage
+    } finally {
+      setAuthChecked(true);
+    }
+  }, []);
+
+  const handleLogout = useCallback((mensajeError?: string) => {
+    try {
+      window.sessionStorage.removeItem(STORAGE_TOKEN_KEY);
+      window.sessionStorage.removeItem(STORAGE_INFO_KEY);
+    } catch {
+      // Ignorar
+    }
+    setToken(null);
+    setPrestador(null);
+    setServices([]);
+    setActionMessage(null);
+    setLoginPassword("");
+    if (mensajeError) {
+      setLoginError(mensajeError);
+    }
+  }, []);
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginError(null);
+
+    if (!loginEmail.trim() || !loginPassword) {
+      setLoginError("Ingresá tu correo electrónico y contraseña.");
+      return;
+    }
+
+    setIsLoggingIn(true);
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/prestadores/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: loginEmail.trim().toLowerCase(),
+          password: loginPassword,
+        }),
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          body && typeof body.detail === "string"
+            ? body.detail
+            : "Correo electrónico o contraseña incorrectos.";
+        throw new Error(detail);
+      }
+
+      const accessToken = String(body.access_token || "");
+      const prestadorInfo = body.prestador as PrestadorSesion;
+      try {
+        window.sessionStorage.setItem(STORAGE_TOKEN_KEY, accessToken);
+        window.sessionStorage.setItem(
+          STORAGE_INFO_KEY,
+          JSON.stringify(prestadorInfo),
+        );
+      } catch {
+        // Ignorar
+      }
+
+      setToken(accessToken);
+      setPrestador(prestadorInfo);
+      setLoginPassword("");
+      setIsLoading(true);
+      setActionMessage(null);
+    } catch (err) {
+      setLoginError(
+        err instanceof Error
+          ? err.message
+          : "No se pudo iniciar sesión en el Portal del Prestador.",
+      );
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
   const loadData = useCallback(async (signal?: AbortSignal) => {
     const baseUrl = getApiBaseUrl();
     try {
-      const [providersRes, servicesRes] = await Promise.all([
-        fetch(`${baseUrl}/prestadores/`, { cache: "no-store", signal }),
-        fetch(`${baseUrl}/servicios/`, { cache: "no-store", signal }),
-      ]);
+      const servicesRes = await fetch(`${baseUrl}/servicios/`, {
+        cache: "no-store",
+        signal,
+      });
 
-      if (!providersRes.ok || !servicesRes.ok) {
+      if (!servicesRes.ok) {
         throw new Error("No se pudo sincronizar con la API de GoldenCare.");
       }
 
-      const [providersData, servicesData] = (await Promise.all([
-        providersRes.json(),
-        servicesRes.json(),
-      ])) as [Prestador[], Servicio[]];
-
-      setProviders(providersData);
+      const servicesData = (await servicesRes.json()) as Servicio[];
       setServices(servicesData);
-      setSelectedProviderId((current) => {
-        if (
-          current &&
-          providersData.some((p) => p.id_prestador === current)
-        ) {
-          return current;
-        }
-        try {
-          const saved = window.localStorage.getItem("goldencare_prestador_id");
-          if (saved && providersData.some((p) => p.id_prestador === saved)) {
-            return saved;
-          }
-        } catch {
-          // Ignorar restricciones de almacenamiento local
-        }
-        return providersData[0]?.id_prestador ?? "";
-      });
-
       setError(null);
       setLastSync(obtenerHoraActual());
       setNowMs(Date.now());
@@ -165,6 +248,9 @@ export default function PrestadorPortalPage() {
   }, []);
 
   useEffect(() => {
+    if (!token || !prestador) {
+      return;
+    }
     const controller = new AbortController();
     void loadData(controller.signal).finally(() => {
       if (!controller.signal.aborted) {
@@ -172,10 +258,10 @@ export default function PrestadorPortalPage() {
       }
     });
     return () => controller.abort();
-  }, [loadData]);
+  }, [token, prestador, loadData]);
 
   useEffect(() => {
-    if (busyServiceId !== null) {
+    if (!token || !prestador || busyServiceId !== null) {
       return;
     }
     const intervalId = window.setInterval(() => {
@@ -195,26 +281,11 @@ export default function PrestadorPortalPage() {
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [busyServiceId, loadData]);
+  }, [token, prestador, busyServiceId, loadData]);
 
-  function handleSelectProvider(id: string) {
-    setSelectedProviderId(id);
-    setActionMessage(null);
-    try {
-      window.localStorage.setItem("goldencare_prestador_id", id);
-    } catch {
-      // Ignorar
-    }
-  }
-
-  const selectedProvider = useMemo(
-    () => providers.find((p) => p.id_prestador === selectedProviderId) ?? null,
-    [providers, selectedProviderId],
-  );
-
-  const selectedProviderInfo = useMemo(
-    () => parsearPrestador(selectedProvider?.rol),
-    [selectedProvider],
+  const prestadorInfo = useMemo(
+    () => parsearPrestador(prestador?.rol),
+    [prestador],
   );
 
   const availableRequests = useMemo(() => {
@@ -227,32 +298,32 @@ export default function PrestadorPortalPage() {
   }, [services]);
 
   const myActiveServices = useMemo(() => {
-    if (!selectedProviderId) return [];
+    if (!prestador?.id_prestador) return [];
     return services
       .filter(
         (s) =>
-          s.id_prestador_asignado === selectedProviderId &&
+          s.id_prestador_asignado === prestador.id_prestador &&
           (s.estado === "asignado" || s.estado === "en curso"),
       )
       .sort(
         (a, b) =>
           new Date(a.fecha_hora).getTime() - new Date(b.fecha_hora).getTime(),
       );
-  }, [services, selectedProviderId]);
+  }, [services, prestador]);
 
   const myCompletedServices = useMemo(() => {
-    if (!selectedProviderId) return [];
+    if (!prestador?.id_prestador) return [];
     return services
       .filter(
         (s) =>
-          s.id_prestador_asignado === selectedProviderId &&
+          s.id_prestador_asignado === prestador.id_prestador &&
           s.estado === "completado",
       )
       .sort(
         (a, b) =>
           new Date(b.fecha_hora).getTime() - new Date(a.fecha_hora).getTime(),
       );
-  }, [services, selectedProviderId]);
+  }, [services, prestador]);
 
   const earningsSummary = useMemo(() => {
     const acumulado = myCompletedServices.reduce(
@@ -271,11 +342,8 @@ export default function PrestadorPortalPage() {
   }, [myCompletedServices, myActiveServices]);
 
   async function handleAcceptRequest(idServicio: string) {
-    if (!selectedProviderId) {
-      setActionMessage({
-        tipo: "error",
-        texto: "Seleccioná primero tu perfil de prestador para aceptar pedidos.",
-      });
+    if (!token || !prestador) {
+      handleLogout("Iniciá sesión nuevamente para aceptar pedidos.");
       return;
     }
 
@@ -287,10 +355,18 @@ export default function PrestadorPortalPage() {
         `${getApiBaseUrl()}/servicios/${encodeURIComponent(idServicio)}/aceptar-prestador`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id_prestador: selectedProviderId }),
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ id_prestador: prestador.id_prestador }),
         },
       );
+
+      if (response.status === 401) {
+        handleLogout("Tu sesión expiró. Volvé a iniciar sesión.");
+        return;
+      }
 
       const body = await response.json().catch(() => null);
       if (!response.ok) {
@@ -306,7 +382,7 @@ export default function PrestadorPortalPage() {
       setActionMessage({
         tipo: "exito",
         texto:
-          "¡Pedido aceptado! Ya aparece en 'Mis Servicios en Curso' para que puedas iniciarlo.",
+          "¡Pedido aceptado! Ya aparece en 'Mis Servicios' para que puedas iniciarlo.",
       });
     } catch (err) {
       setActionMessage({
@@ -326,6 +402,11 @@ export default function PrestadorPortalPage() {
     idServicio: string,
     nuevoEstado: "en curso" | "completado",
   ) {
+    if (!token) {
+      handleLogout("Iniciá sesión nuevamente para actualizar el servicio.");
+      return;
+    }
+
     setBusyServiceId(idServicio);
     setActionMessage(null);
 
@@ -334,10 +415,18 @@ export default function PrestadorPortalPage() {
         `${getApiBaseUrl()}/servicios/${encodeURIComponent(idServicio)}/estado`,
         {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({ estado: nuevoEstado }),
         },
       );
+
+      if (response.status === 401) {
+        handleLogout("Tu sesión expiró. Volvé a iniciar sesión.");
+        return;
+      }
 
       const body = await response.json().catch(() => null);
       if (!response.ok) {
@@ -369,6 +458,116 @@ export default function PrestadorPortalPage() {
     }
   }
 
+  if (!authChecked) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-300">
+        <p className="text-sm font-medium">Verificando sesión...</p>
+      </main>
+    );
+  }
+
+  if (!token || !prestador) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-10 text-slate-100">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900 p-7 shadow-2xl sm:p-8">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400 text-2xl font-extrabold text-slate-950">
+              G
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">
+                GoldenCare · San Pedro de Jujuy
+              </p>
+              <h1 className="text-xl font-bold text-white">
+                Acceso Prestadores
+              </h1>
+            </div>
+          </div>
+
+          <p className="mt-4 text-sm text-slate-400">
+            Ingresá con tu correo electrónico y contraseña para ver solicitudes
+            disponibles, aceptar pedidos y consultar tus ganancias netas (85%).
+          </p>
+
+          <form onSubmit={handleLogin} className="mt-6 space-y-4">
+            <div>
+              <label
+                htmlFor="prestador-login-email"
+                className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
+              >
+                Correo Electrónico
+              </label>
+              <input
+                id="prestador-login-email"
+                type="email"
+                autoComplete="email"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="laura.mendez@goldencare.com"
+                required
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="prestador-login-password"
+                className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-300"
+              >
+                Contraseña
+              </label>
+              <input
+                id="prestador-login-password"
+                type="password"
+                autoComplete="current-password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                className="w-full rounded-xl border border-white/15 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/25"
+              />
+            </div>
+
+            {loginError && (
+              <div
+                role="alert"
+                className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs font-semibold text-rose-200"
+              >
+                {loginError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="mt-2 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-cyan-400 px-5 py-3 text-sm font-extrabold text-slate-950 shadow-sm transition hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoggingIn ? "Ingresando..." : "Ingresar al Portal"}
+            </button>
+          </form>
+
+          {/* Aviso discreto de acceso demo */}
+          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-3.5 text-xs text-slate-400">
+            <p className="font-semibold text-cyan-300">
+              Cuentas demo de prueba (clave: <code className="text-white">prestador123</code>)
+            </p>
+            <ul className="mt-1.5 space-y-0.5 font-mono text-[11px] text-slate-300">
+              <li>laura.mendez@goldencare.com</li>
+              <li>roberto.gomez@goldencare.com</li>
+              <li>carolina.vega@goldencare.com</li>
+            </ul>
+          </div>
+
+          <div className="mt-5 text-center text-xs text-slate-400">
+            <Link href="/" className="transition hover:text-cyan-300">
+              ← Volver al Portal Público
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="flex min-h-screen w-full flex-col overflow-x-hidden bg-slate-100 text-slate-900">
       {/* Header móvil estilo app de prestadores */}
@@ -389,58 +588,45 @@ export default function PrestadorPortalPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-slate-200">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-              <span className="hidden sm:inline">En línea</span>
-              {lastSync && (
-                <span className="font-mono text-slate-400">{lastSync}</span>
-              )}
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-slate-200 sm:flex">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                <span>En línea</span>
+                {lastSync && (
+                  <span className="font-mono text-slate-400">{lastSync}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleLogout()}
+                className="rounded-xl border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-xs font-bold text-rose-200 transition hover:bg-rose-500/25"
+              >
+                Cerrar sesión
+              </button>
             </div>
           </div>
 
-          {/* Selector de perfil del prestador */}
-          <div className="mt-5 rounded-2xl border border-white/15 bg-white/5 p-4">
-            <label
-              htmlFor="selector-prestador"
-              className="block text-xs font-semibold uppercase tracking-wider text-cyan-300"
-            >
-              Tu perfil de prestador activo
-            </label>
-            <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <select
-                id="selector-prestador"
-                value={selectedProviderId}
-                onChange={(e) => handleSelectProvider(e.target.value)}
-                disabled={isLoading || providers.length === 0}
-                className="w-full flex-1 rounded-xl border border-white/20 bg-slate-900 px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/30"
-              >
-                {providers.length === 0 ? (
-                  <option value="">Sin prestadores activos registrados</option>
-                ) : (
-                  providers.map((p) => (
-                    <option key={p.id_prestador} value={p.id_prestador}>
-                      {p.rol}
-                    </option>
-                  ))
-                )}
-              </select>
-
-              {selectedProvider && (
-                <div className="flex items-center gap-2.5 rounded-xl bg-white/10 px-3.5 py-2.5 text-xs">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-400 font-extrabold text-slate-950">
-                    {selectedProviderInfo.iniciales}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate font-bold text-white">
-                      {selectedProviderInfo.nombre}
-                    </p>
-                    <p className="truncate text-cyan-200">
-                      {selectedProviderInfo.especialidad}
-                    </p>
-                  </div>
-                </div>
-              )}
+          {/* Perfil del prestador autenticado */}
+          <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/5 p-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-cyan-400 text-sm font-extrabold text-slate-950">
+                {prestadorInfo.iniciales}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-base font-bold text-white">
+                  {prestador.nombre || prestadorInfo.nombre}
+                </p>
+                <p className="truncate text-xs text-cyan-200">
+                  {prestador.especialidad || prestadorInfo.especialidad}
+                </p>
+                <p className="truncate font-mono text-[11px] text-slate-400">
+                  {prestador.email}
+                </p>
+              </div>
             </div>
+            <span className="shrink-0 rounded-full bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-300 ring-1 ring-emerald-400/30">
+              Activo
+            </span>
           </div>
 
           {/* Resumen de Ganancias del Prestador */}
@@ -565,7 +751,10 @@ export default function PrestadorPortalPage() {
             ))}
           </div>
         ) : activeTab === "disponibles" ? (
-          <section aria-label="Solicitudes disponibles estilo Uber" className="space-y-4">
+          <section
+            aria-label="Solicitudes disponibles estilo Uber"
+            className="space-y-4"
+          >
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold text-slate-900 sm:text-lg">
                 Solicitudes abiertas en San Pedro de Jujuy
@@ -672,7 +861,7 @@ export default function PrestadorPortalPage() {
 
                     <button
                       type="button"
-                      disabled={isBusy || !selectedProviderId}
+                      disabled={isBusy}
                       onClick={() => void handleAcceptRequest(srv.id_servicio)}
                       className="mt-4 flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-5 py-3.5 text-base font-bold text-white shadow-sm transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -727,7 +916,7 @@ export default function PrestadorPortalPage() {
                               <span
                                 className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
                                   estaEnCurso
-                                    ? "bg-violet-100 text-violet-800"
+                                    ? "bg-indigo-100 text-indigo-800"
                                     : "bg-cyan-100 text-cyan-800"
                                 }`}
                               >
@@ -796,7 +985,7 @@ export default function PrestadorPortalPage() {
                                 "en curso",
                               )
                             }
-                            className="flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3.5 text-base font-bold text-white shadow-sm transition hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3.5 text-base font-bold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isBusy
                               ? "Actualizando..."
