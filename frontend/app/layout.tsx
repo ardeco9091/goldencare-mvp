@@ -12,13 +12,12 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL || "https://goldencare-mvp.vercel.app";
-
+const SITE_URL = "https://goldencare-mvp.vercel.app";
 const SITE_TITLE =
   "GoldenCare — Asistencia y Acompañamiento para Personas Mayores";
 const SITE_DESCRIPTION =
-  "Coordinación inteligente en tiempo real de traslados, compañía domiciliaria y mandados en San Pedro de Jujuy. Seguimiento en vivo y prestadores verificados.";
+  "Coordinación inteligente en tiempo real de traslados, compañía domiciliaria y mandados en San Pedro de Jujuy.";
+const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -31,11 +30,21 @@ export const metadata: Metadata = {
     siteName: "GoldenCare",
     locale: "es_AR",
     type: "website",
+    images: [
+      {
+        url: OG_IMAGE_URL,
+        width: 1200,
+        height: 630,
+        type: "image/png",
+        alt: "GoldenCare San Pedro de Jujuy",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
+    images: [OG_IMAGE_URL],
   },
 };
 
